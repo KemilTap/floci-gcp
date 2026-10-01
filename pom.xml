@@ -206,7 +206,7 @@
         <dependency>
             <groupId>org.apache.arrow</groupId>
             <artifactId>arrow-format</artifactId>
-            <version>15.0.2</version>
+            <version>19.0.0</version>
         </dependency>
 
         <!-- Cloud Tasks gRPC stubs (CloudTasksGrpc ImplBase) -->

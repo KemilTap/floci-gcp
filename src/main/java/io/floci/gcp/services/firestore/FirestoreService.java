@@ -310,11 +310,9 @@ public class FirestoreService {
 
     public List<StoredDocument> runQuery(String parent, StructuredQuery query) {
         LOG.debugf("runQuery parent=%s", parent);
-        String collectionId = query.getFromCount() > 0 ? query.getFrom(0).getCollectionId() : "";
-        String prefix = parent + "/" + collectionId + "/";
-
-        List<StoredDocument> results = documentStore.scan(k -> k.startsWith(prefix)
-                && k.substring(prefix.length()).indexOf('/') < 0);
+        StructuredQuery.CollectionSelector from = query.getFromCount() > 0
+                ? query.getFrom(0) : StructuredQuery.CollectionSelector.getDefaultInstance();
+        List<StoredDocument> results = documentStore.scan(k -> inCollection(k, parent, from));
 
         if (query.hasWhere()) {
             results = results.stream()
@@ -326,6 +324,20 @@ public class FirestoreService {
         results = sortByOrderBy(results, query);
         results = applyCursors(results, query);
         return applyLimitAndOffset(results, query);
+    }
+
+    private static boolean inCollection(String docName, String parent,
+            StructuredQuery.CollectionSelector from) {
+        if (!from.getAllDescendants()) {
+            String prefix = parent + "/" + from.getCollectionId() + "/";
+            return docName.startsWith(prefix) && docName.indexOf('/', prefix.length()) < 0;
+        }
+        String prefix = parent + "/";
+        if (!docName.startsWith(prefix)) {
+            return false;
+        }
+        String[] segments = docName.substring(prefix.length()).split("/");
+        return segments.length >= 2 && segments[segments.length - 2].equals(from.getCollectionId());
     }
 
     /**

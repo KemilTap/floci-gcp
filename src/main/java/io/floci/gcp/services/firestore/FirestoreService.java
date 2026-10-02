@@ -41,6 +41,7 @@ import java.util.OptionalInt;
 import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
 import java.util.stream.Stream;
 
 @ApplicationScoped
@@ -312,7 +313,7 @@ public class FirestoreService {
         LOG.debugf("runQuery parent=%s", parent);
         StructuredQuery.CollectionSelector from = query.getFromCount() > 0
                 ? query.getFrom(0) : StructuredQuery.CollectionSelector.getDefaultInstance();
-        List<StoredDocument> results = documentStore.scan(k -> inCollection(k, parent, from));
+        List<StoredDocument> results = documentStore.scan(inCollection(parent, from));
 
         if (query.hasWhere()) {
             results = results.stream()
@@ -326,18 +327,24 @@ public class FirestoreService {
         return applyLimitAndOffset(results, query);
     }
 
-    private static boolean inCollection(String docName, String parent,
+    private static Predicate<String> inCollection(String parent,
             StructuredQuery.CollectionSelector from) {
+        String collectionId = from.getCollectionId();
         if (!from.getAllDescendants()) {
-            String prefix = parent + "/" + from.getCollectionId() + "/";
-            return docName.startsWith(prefix) && docName.indexOf('/', prefix.length()) < 0;
+            String prefix = parent + "/" + collectionId + "/";
+            return name -> name.startsWith(prefix) && name.indexOf('/', prefix.length()) < 0;
         }
         String prefix = parent + "/";
-        if (!docName.startsWith(prefix)) {
-            return false;
-        }
-        String[] segments = docName.substring(prefix.length()).split("/");
-        return segments.length >= 2 && segments[segments.length - 2].equals(from.getCollectionId());
+        return name -> {
+            if (!name.startsWith(prefix)) {
+                return false;
+            }
+            int idEnd = name.lastIndexOf('/');
+            int idStart = name.lastIndexOf('/', idEnd - 1) + 1;
+            return idStart >= prefix.length()
+                    && idEnd - idStart == collectionId.length()
+                    && name.startsWith(collectionId, idStart);
+        };
     }
 
     /**

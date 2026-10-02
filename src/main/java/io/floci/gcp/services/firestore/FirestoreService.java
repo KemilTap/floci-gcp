@@ -86,6 +86,7 @@ public class FirestoreService {
 
     public WriteCommitResult applyWrite(Write write, Instant commitTime) {
         synchronized (writeLock) {
+            validateFieldPaths(write);
             checkPrecondition(write);
             return applyWriteUnchecked(write, commitTime);
         }
@@ -99,6 +100,7 @@ public class FirestoreService {
         synchronized (writeLock) {
             validateTransaction(transactionId);
             for (Write write : writes) {
+                validateFieldPaths(write);
                 checkPrecondition(write);
             }
             List<WriteCommitResult> results = new ArrayList<>(writes.size());
@@ -108,6 +110,12 @@ public class FirestoreService {
             discardTransaction(transactionId);
             return results;
         }
+    }
+
+    private static void validateFieldPaths(Write write) {
+        write.getUpdateMask().getFieldPathsList().forEach(FirestoreService::splitFieldPath);
+        write.getUpdateTransformsList().forEach(t -> splitFieldPath(t.getFieldPath()));
+        write.getTransform().getFieldTransformsList().forEach(t -> splitFieldPath(t.getFieldPath()));
     }
 
     private void checkPrecondition(Write write) {
@@ -462,6 +470,9 @@ public class FirestoreService {
     private static final Duration TRANSACTION_TTL = Duration.ofMinutes(15);
 
     private final Object writeLock = new Object();
+
+    /** https://firebase.google.com/docs/firestore/quotas#limits: maximum depth of fields in a map or array. */
+    private static final int MAX_FIELD_DEPTH = 20;
     private final Map<String, TransactionState> transactions = new ConcurrentHashMap<>();
 
     private static final class TransactionState {
@@ -702,38 +713,50 @@ public class FirestoreService {
         if (doc.getFields() == null) {
             return null;
         }
-
-        String[] segments = path.split("\\.", -1);
-        StoredValue value = doc.getFields().get(segments[0]);
-        for (int i = 1; i < segments.length; i++) {
-            if (value == null || !"map".equals(value.getType()) || value.getMapValue() == null) {
-                return null;
-            }
-            value = value.getMapValue().get(segments[i]);
-        }
-        return value;
+        return getAtPath(doc.getFields(), splitFieldPath(path));
     }
 
-    /** Splits a field path into segments, unquoting backtick-quoted segments. */
+    /**
+     * Splits a field path into segments, unquoting backtick-quoted segments.
+     * Rejects empty segments, unterminated quotes or escapes, and paths deeper
+     * than Firestore's documented maximum field depth.
+     */
     static List<String> splitFieldPath(String path) {
         List<String> segments = new ArrayList<>();
         StringBuilder segment = new StringBuilder();
         boolean quoted = false;
         for (int i = 0; i < path.length(); i++) {
             char c = path.charAt(i);
-            if (quoted && c == '\\' && i + 1 < path.length()) {
-                segment.append(path.charAt(++i));
+            if (quoted && c == '\\') {
+                if (++i == path.length()) {
+                    throw invalidFieldPath(path);
+                }
+                segment.append(path.charAt(i));
             } else if (c == '`') {
                 quoted = !quoted;
             } else if (c == '.' && !quoted) {
-                segments.add(segment.toString());
-                segment.setLength(0);
+                addSegment(segments, segment, path);
             } else {
                 segment.append(c);
             }
         }
-        segments.add(segment.toString());
+        if (quoted) {
+            throw invalidFieldPath(path);
+        }
+        addSegment(segments, segment, path);
         return segments;
+    }
+
+    private static void addSegment(List<String> segments, StringBuilder segment, String path) {
+        if (segment.isEmpty() || segments.size() == MAX_FIELD_DEPTH) {
+            throw invalidFieldPath(path);
+        }
+        segments.add(segment.toString());
+        segment.setLength(0);
+    }
+
+    private static GcpException invalidFieldPath(String path) {
+        return GcpException.invalidArgument("Invalid field path: " + path);
     }
 
     private static StoredValue getAtPath(Map<String, StoredValue> fields, List<String> path) {

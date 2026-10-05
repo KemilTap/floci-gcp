@@ -1,13 +1,13 @@
 package io.floci.gcp.services.firestore;
 
 import com.google.firestore.v1.Document;
-import com.google.firestore.v1.Value;
-import com.google.firestore.v1.UpdateDocumentRequest;
 import com.google.firestore.v1.DocumentMask;
 import com.google.firestore.v1.RunQueryRequest;
 import com.google.firestore.v1.RunQueryResponse;
 import com.google.firestore.v1.StructuredQuery;
 import com.google.firestore.v1.TransactionOptions;
+import com.google.firestore.v1.UpdateDocumentRequest;
+import com.google.firestore.v1.Value;
 import com.google.firestore.v1.Write;
 import io.floci.gcp.core.storage.InMemoryStorage;
 import io.floci.gcp.services.firestore.model.StoredDocument;

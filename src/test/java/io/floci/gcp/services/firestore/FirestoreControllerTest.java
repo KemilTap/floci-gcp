@@ -1,6 +1,9 @@
 package io.floci.gcp.services.firestore;
 
 import com.google.firestore.v1.Document;
+import com.google.firestore.v1.Value;
+import com.google.firestore.v1.UpdateDocumentRequest;
+import com.google.firestore.v1.DocumentMask;
 import com.google.firestore.v1.RunQueryRequest;
 import com.google.firestore.v1.RunQueryResponse;
 import com.google.firestore.v1.StructuredQuery;
@@ -15,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -115,5 +119,46 @@ class FirestoreControllerTest {
         for (RunQueryResponse resp : observer.messages) {
             assertTrue(resp.getTransaction().isEmpty());
         }
+    }
+
+    @Test
+    void updateDocumentWithoutMaskOverwritesDocument() {
+        String name = PARENT + "/col/doc1";
+        controller.updateDocument(UpdateDocumentRequest.newBuilder()
+                .setDocument(documentWith(name, "a", "1"))
+                .build(), new CapturingObserver<>());
+        CapturingObserver<Document> observer = new CapturingObserver<>();
+
+        controller.updateDocument(UpdateDocumentRequest.newBuilder()
+                .setDocument(documentWith(name, "b", "2"))
+                .build(), observer);
+
+        assertNull(observer.error);
+        assertEquals(Set.of("b"), observer.messages.get(0).getFieldsMap().keySet());
+        assertEquals(Set.of("b"), service.getDocument(name).orElseThrow().getFields().keySet());
+    }
+
+    @Test
+    void updateDocumentWithMaskKeepsFieldsOutsideMask() {
+        String name = PARENT + "/col/doc1";
+        controller.updateDocument(UpdateDocumentRequest.newBuilder()
+                .setDocument(documentWith(name, "a", "1"))
+                .build(), new CapturingObserver<>());
+        CapturingObserver<Document> observer = new CapturingObserver<>();
+
+        controller.updateDocument(UpdateDocumentRequest.newBuilder()
+                .setDocument(documentWith(name, "b", "2"))
+                .setUpdateMask(DocumentMask.newBuilder().addFieldPaths("b"))
+                .build(), observer);
+
+        assertNull(observer.error);
+        assertEquals(Set.of("a", "b"), service.getDocument(name).orElseThrow().getFields().keySet());
+    }
+
+    private static Document documentWith(String name, String field, String value) {
+        return Document.newBuilder()
+                .setName(name)
+                .putFields(field, Value.newBuilder().setStringValue(value).build())
+                .build();
     }
 }

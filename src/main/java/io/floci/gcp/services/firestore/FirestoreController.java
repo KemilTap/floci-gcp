@@ -240,8 +240,10 @@ public class FirestoreController extends FirestoreGrpc.FirestoreImplBase {
         LOG.debugf("updateDocument name=%s", request.getDocument().getName());
         try {
             Write.Builder write = Write.newBuilder()
-                    .setUpdate(request.getDocument())
-                    .setUpdateMask(request.getUpdateMask());
+                    .setUpdate(request.getDocument());
+            if (request.hasUpdateMask()) {
+                write.setUpdateMask(request.getUpdateMask());
+            }
             if (request.hasCurrentDocument()) {
                 write.setCurrentDocument(request.getCurrentDocument());
             }

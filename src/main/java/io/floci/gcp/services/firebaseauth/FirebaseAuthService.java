@@ -3,6 +3,7 @@ package io.floci.gcp.services.firebaseauth;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.floci.gcp.config.EmulatorConfig;
+import io.floci.gcp.core.common.ProjectNumbers;
 import io.floci.gcp.core.common.ServiceDescriptor;
 import io.floci.gcp.core.common.ServiceProtocol;
 import io.floci.gcp.core.common.ServiceRegistry;
@@ -48,7 +49,6 @@ public class FirebaseAuthService {
     private static final long TOKEN_EXPIRES_IN_SECONDS = 3600;
     private static final long SESSION_COOKIE_MIN_VALID_DURATION = 5 * 60;
     private static final long SESSION_COOKIE_MAX_VALID_DURATION = 14 * 24 * 60 * 60;
-    private static final String PROJECT_NUMBER = "12345";
     static final String CUSTOM_TOKEN_AUDIENCE =
             "https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit";
     private static final Set<String> RESERVED_CLAIMS = Set.of(
@@ -554,7 +554,7 @@ public class FirebaseAuthService {
         response.put("refresh_token", tokens.get("refreshToken"));
         response.put("token_type", "Bearer");
         response.put("user_id", user.getLocalId());
-        response.put("project_id", PROJECT_NUMBER);
+        response.put("project_id", ProjectNumbers.of(project));
         return response;
     }
 

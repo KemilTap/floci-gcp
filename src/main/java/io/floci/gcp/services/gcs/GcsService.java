@@ -6,6 +6,7 @@ import com.google.protobuf.ByteString;
 import com.google.pubsub.v1.PubsubMessage;
 import io.floci.gcp.config.EmulatorConfig;
 import io.floci.gcp.core.common.GcpException;
+import io.floci.gcp.core.common.ProjectNumbers;
 import io.floci.gcp.core.common.ServiceDescriptor;
 import io.floci.gcp.core.common.ServiceProtocol;
 import io.floci.gcp.core.common.ServiceRegistry;
@@ -52,6 +53,7 @@ import java.util.Base64;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Comparator;
 import java.util.Set;
@@ -243,6 +245,7 @@ public class GcsService {
         // Validate before the existence check: a malformed name is a 400 regardless of
         // whether something with that name happens to exist.
         GcsBucketNames.validate(name);
+        validateCustomPlacement(body);
         synchronized (bucketLock(name)) {
             if (bucketStore.get(name).isPresent()) {
                 LOG.warnf("createBucket failed: bucket already exists name=%s", name);
@@ -256,7 +259,7 @@ public class GcsService {
             bucket.setId(name);
             bucket.setName(name);
             bucket.setProjectId(projectId != null ? projectId : defaultProjectId);
-            bucket.setProjectNumber("1");
+            bucket.setProjectNumber(ProjectNumbers.of(bucket.getProjectId()));
             String location = body != null && body.containsKey("location")
                     ? (String) body.get("location") : "US";
             bucket.setLocation(location.toUpperCase());
@@ -270,6 +273,9 @@ public class GcsService {
             if (body != null) {
                 if (body.containsKey("labels")) {
                     bucket.setLabels((Map<String, String>) body.get("labels"));
+                }
+                if (body.get("customPlacementConfig") instanceof Map<?, ?> placement) {
+                    bucket.setCustomPlacementConfig(customPlacementConfig(placement));
                 }
                 if (body.containsKey("versioning")) {
                     bucket.setVersioning((Map<String, Object>) body.get("versioning"));
@@ -328,7 +334,37 @@ public class GcsService {
     public GcsBucket getBucket(String name) {
         LOG.debugf("getBucket name=%s", name);
         return bucketStore.get(name)
+                .map(this::withProjectDefaults)
                 .orElseThrow(() -> GcpException.notFound("Bucket not found: " + name));
+    }
+
+    // Buckets persisted before projectId was stored belong to the default project.
+    private GcsBucket withProjectDefaults(GcsBucket bucket) {
+        if (bucket.getProjectId() == null) {
+            bucket.setProjectId(defaultProjectId);
+        }
+        return bucket;
+    }
+
+    // A configurable dual-region is a pair of regions (cloud.google.com/storage/docs/locations).
+    private static void validateCustomPlacement(Map<String, Object> body) {
+        if (body == null || !(body.get("customPlacementConfig") instanceof Map<?, ?> placement)) {
+            return;
+        }
+        if (!(placement.get("dataLocations") instanceof List<?> dataLocations) || dataLocations.size() != 2) {
+            throw GcpException.invalidArgument(
+                    "customPlacementConfig.dataLocations must list exactly two regions for a configurable dual-region.");
+        }
+    }
+
+    private static Map<String, Object> customPlacementConfig(Map<?, ?> placement) {
+        Map<String, Object> config = new LinkedHashMap<>();
+        if (placement.get("dataLocations") instanceof List<?> dataLocations) {
+            config.put("dataLocations", dataLocations.stream()
+                    .map(location -> String.valueOf(location).toUpperCase(Locale.ROOT))
+                    .toList());
+        }
+        return config;
     }
 
     @SuppressWarnings("unchecked")
@@ -588,10 +624,18 @@ public class GcsService {
     public List<GcsBucket> listBuckets(String projectId) {
         LOG.debugf("listBuckets project=%s", projectId);
         List<GcsBucket> buckets = bucketStore.scan(k -> true).stream()
-                .filter(b -> projectId == null || projectId.equals(b.getProjectId()))
+                .map(this::withProjectDefaults)
+                .filter(b -> projectId == null || matchesProject(b, projectId))
                 .toList();
         LOG.debugf("listBuckets project=%s count=%d", projectId, buckets.size());
         return buckets;
+    }
+
+    private static boolean matchesProject(GcsBucket bucket, String project) {
+        if (!project.isEmpty() && project.chars().allMatch(Character::isDigit)) {
+            return project.equals(bucket.getProjectNumber());
+        }
+        return project.equals(bucket.getProjectId());
     }
 
     public GcsObjectMeta putObject(String bucket, String objectName, String contentType, byte[] data,
@@ -2151,7 +2195,7 @@ public class GcsService {
     }
 
     public Optional<GcsBucket> findBucket(String name) {
-        return bucketStore.get(name);
+        return bucketStore.get(name).map(this::withProjectDefaults);
     }
 
     public GcsBucket lockRetentionPolicy(String bucket, Long ifMetagenerationMatch) {

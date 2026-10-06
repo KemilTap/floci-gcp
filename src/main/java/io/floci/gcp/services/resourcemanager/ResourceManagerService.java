@@ -2,6 +2,7 @@ package io.floci.gcp.services.resourcemanager;
 
 import io.floci.gcp.config.EmulatorConfig;
 import io.floci.gcp.core.common.GcpException;
+import io.floci.gcp.core.common.ProjectNumbers;
 import io.floci.gcp.core.common.ServiceDescriptor;
 import io.floci.gcp.core.common.ServiceProtocol;
 import io.floci.gcp.core.common.ServiceRegistry;
@@ -57,7 +58,7 @@ public class ResourceManagerService {
             throw GcpException.invalidArgument("Project ID is required.");
         }
         Map<String, Object> project = new LinkedHashMap<>();
-        project.put("projectNumber", projectNumber(projectId));
+        project.put("projectNumber", ProjectNumbers.of(projectId));
         project.put("projectId", projectId);
         project.put("lifecycleState", "ACTIVE");
         project.put("name", projectId);
@@ -67,10 +68,6 @@ public class ResourceManagerService {
 
     private void requireProjectForPolicy(String resource) {
         getProject(resource.substring("projects/".length()));
-    }
-
-    static String projectNumber(String projectId) {
-        return String.valueOf(100_000_000_000L + Math.floorMod((long) projectId.hashCode(), 900_000_000_000L));
     }
 
     /** Stable per-project timestamp, like the deterministic projectNumber — real project createTimes are immutable. */

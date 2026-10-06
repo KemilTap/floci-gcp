@@ -1,6 +1,7 @@
 package io.floci.gcp.services.firebaseauth;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.floci.gcp.core.common.ProjectNumbers;
 import io.quarkus.test.junit.QuarkusTest;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Test;
@@ -86,7 +87,7 @@ class FirebaseAuthRestIntegrationTest {
                 .body("token_type", equalTo("Bearer"))
                 .body("expires_in", equalTo("3600"))
                 .body("user_id", equalTo(localId))
-                .body("project_id", equalTo("12345"))
+                .body("project_id", equalTo(ProjectNumbers.of("test-project")))
                 .body("id_token", notNullValue())
                 .body("refresh_token", notNullValue());
     }

@@ -1,7 +1,10 @@
 package io.floci.gcp.services.gcs;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.floci.gcp.core.common.GcpException;
+import io.floci.gcp.core.common.ProjectNumbers;
 import io.floci.gcp.core.storage.HybridStorage;
 import io.floci.gcp.core.storage.InMemoryStorage;
 import io.floci.gcp.core.storage.PersistentStorage;
@@ -24,6 +27,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Base64;
@@ -615,6 +619,75 @@ class GcsServiceTest {
         GcpException missing = assertThrows(GcpException.class,
                 () -> afterPurge.getBucket("soft-only"));
         assertEquals("NOT_FOUND", missing.getGcpStatus());
+    }
+
+    @Test
+    void listingByProjectNumberKeepsProjectsWithCollidingHashesApart() {
+        assertEquals("project-an".hashCode(), "project-c0".hashCode());
+        service.createBucket("an-bucket", "project-an", BASE_URL, Map.of());
+        service.createBucket("c0-bucket", "project-c0", BASE_URL, Map.of());
+
+        assertNotEquals(ProjectNumbers.of("project-an"), ProjectNumbers.of("project-c0"));
+        assertEquals(List.of("an-bucket"), service.listBuckets(ProjectNumbers.of("project-an")).stream()
+                .map(GcsBucket::getName).toList());
+        assertEquals(List.of("c0-bucket"), service.listBuckets(ProjectNumbers.of("project-c0")).stream()
+                .map(GcsBucket::getName).toList());
+    }
+
+    @ParameterizedTest
+    @EnumSource(LegacyMigrationStorageMode.class)
+    void bucketProjectSurvivesReloadAndStaysOutOfTheJsonApi(LegacyMigrationStorageMode mode) throws Exception {
+        Path root = tempDir.resolve("bucket-project-" + mode);
+        TypeReference<Map<String, GcsBucket>> bucketType = new TypeReference<>() {};
+        StorageBackend<String, GcsBucket> buckets = openMigrationStorage(mode, root, "buckets", bucketType);
+        buckets.load();
+        new GcsService(buckets, new InMemoryStorage<>(), new InMemoryStorage<>(), "test-project")
+                .createBucket("project-x-bucket", "project-x", BASE_URL, Map.of());
+        closeMigrationStorage(buckets);
+
+        StorageBackend<String, GcsBucket> reloaded = openMigrationStorage(mode, root, "buckets", bucketType);
+        reloaded.load();
+        try {
+            GcsService restarted = new GcsService(
+                    reloaded, new InMemoryStorage<>(), new InMemoryStorage<>(), "test-project");
+            assertEquals(List.of("project-x-bucket"), restarted.listBuckets("project-x").stream()
+                    .map(GcsBucket::getName).toList());
+            assertEquals(List.of("project-x-bucket"), restarted.listBuckets(ProjectNumbers.of("project-x"))
+                    .stream().map(GcsBucket::getName).toList());
+            assertTrue(restarted.listBuckets("test-project").isEmpty());
+
+            GcsBucket bucket = restarted.getBucket("project-x-bucket");
+            assertEquals("project-x", bucket.getProjectId());
+            ObjectMapper apiMapper = new ObjectMapper();
+            new GcsJacksonCustomizer().customize(apiMapper);
+            JsonNode rendered = apiMapper.valueToTree(bucket);
+            assertFalse(rendered.has("projectId"));
+            assertEquals(ProjectNumbers.of("project-x"), rendered.path("projectNumber").asText());
+        } finally {
+            closeMigrationStorage(reloaded);
+        }
+    }
+
+    @Test
+    void legacyBucketWithoutProjectIdFallsBackToTheDefaultProject() throws Exception {
+        Path file = tempDir.resolve("legacy-buckets.json");
+        Files.writeString(file, """
+                {"legacy-bucket": {"kind": "storage#bucket", "id": "legacy-bucket", "name": "legacy-bucket",
+                  "projectNumber": "1", "location": "US", "storageClass": "STANDARD"}}
+                """);
+        PersistentStorage<String, GcsBucket> buckets = new PersistentStorage<>(file, new TypeReference<>() {});
+        buckets.load();
+
+        GcsService restarted = new GcsService(
+                buckets, new InMemoryStorage<>(), new InMemoryStorage<>(), "test-project");
+
+        GcsBucket bucket = restarted.getBucket("legacy-bucket");
+        assertEquals("test-project", bucket.getProjectId());
+        assertEquals(ProjectNumbers.of("test-project"), bucket.getProjectNumber());
+        assertEquals(List.of("legacy-bucket"), restarted.listBuckets("test-project").stream()
+                .map(GcsBucket::getName).toList());
+        assertEquals(List.of("legacy-bucket"), restarted.listBuckets(ProjectNumbers.of("test-project"))
+                .stream().map(GcsBucket::getName).toList());
     }
 
     @ParameterizedTest

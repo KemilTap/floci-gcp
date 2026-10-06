@@ -150,6 +150,9 @@ Terraform's plan/refresh diff, without hand-modeling the full `NodeConfig` proto
   `CheckAutopilotCompatibility`, `FetchClusterUpgradeInfo`, `FetchNodePoolUpgradeInfo`
 - `GetOperation` / `ListOperations`
 
+`ListClusters` and `ListOperations` accept `-` as the location
+(`projects/{project}/locations/-`) to list across all zones and regions.
+
 This is the full `container.v1` `ClusterManager` RPC surface except
 `CancelOperation` (operations are always synchronous/`DONE`, so there is
 nothing in flight to cancel).

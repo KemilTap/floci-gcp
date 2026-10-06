@@ -293,7 +293,7 @@ public class GkeService {
 
     public List<StoredCluster> listClusters(String project, String location) {
         return clusterStore.scan(k -> true).stream()
-                .filter(c -> project.equals(c.getProject()) && location.equals(c.getLocation()))
+                .filter(c -> project.equals(c.getProject()) && ("-".equals(location) || location.equals(c.getLocation())))
                 .map(this::withNodePools)
                 .toList();
     }

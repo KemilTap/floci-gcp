@@ -202,6 +202,12 @@ Service accounts follow the GCP naming convention:
 projects/{project}/serviceAccounts/{account}@{project}.iam.gserviceaccount.com
 ```
 
+The `-` wildcard can replace the project ID in any service account or key name
+(`projects/-/serviceAccounts/{EMAIL_ADDRESS|UNIQUE_ID}`), which is what Terraform sends.
+The owning project is resolved from the account, and resource names in responses carry
+the real project. As on GCP, a missing account addressed through `-` returns
+`403 PERMISSION_DENIED` instead of `404 NOT_FOUND`.
+
 ## Service Account Keys
 
 ```bash

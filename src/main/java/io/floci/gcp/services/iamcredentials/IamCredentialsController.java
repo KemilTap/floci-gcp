@@ -14,7 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-@Path("/v1/projects/-/serviceAccounts")
+@Path("/v1/projects")
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
@@ -28,7 +28,7 @@ public class IamCredentialsController {
     }
 
     @POST
-    @Path("/{serviceAccount}:generateAccessToken")
+    @Path("/-/serviceAccounts/{serviceAccount}:generateAccessToken")
     public Response generateAccessToken(@PathParam("serviceAccount") String serviceAccount,
             Map<String, Object> body) {
         List<?> scopes = body != null && body.get("scope") instanceof List<?> scopeList

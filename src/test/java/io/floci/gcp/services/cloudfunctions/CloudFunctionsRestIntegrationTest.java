@@ -155,4 +155,26 @@ class CloudFunctionsRestIntegrationTest {
                 .body("uploadUrl", startsWith("https://functions.example.test/"))
                 .body("storageSource.sourceUploadUrl", startsWith("https://functions.example.test/"));
     }
+
+    @Test
+    void listFunctionsWithLocationWildcardSpansAllLocations() {
+        String project = "functions-it-wildcard";
+        for (String location : new String[]{"us-central1", "europe-west1"}) {
+            given()
+                    .contentType("application/json")
+                    .queryParam("functionId", "fn")
+                    .body("{\"buildConfig\":{\"runtime\":\"java21\"}}")
+                    .when().post("/v2/projects/" + project + "/locations/" + location + "/functions")
+                    .then()
+                    .statusCode(200);
+        }
+
+        given()
+                .when().get("/v2/projects/" + project + "/locations/-/functions")
+                .then()
+                .statusCode(200)
+                .body("functions.name", containsInAnyOrder(
+                        "projects/" + project + "/locations/europe-west1/functions/fn",
+                        "projects/" + project + "/locations/us-central1/functions/fn"));
+    }
 }

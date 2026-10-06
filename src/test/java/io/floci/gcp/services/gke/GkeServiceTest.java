@@ -101,6 +101,28 @@ class GkeServiceTest {
     }
 
     @Test
+    void listClustersWithLocationWildcardSpansAllLocationsOfProject() {
+        service.createCluster(PROJECT, LOCATION, Map.of("name", "a"));
+        service.createCluster(PROJECT, "europe-west1-b", Map.of("name", "b"));
+        service.createCluster("other-project", LOCATION, Map.of("name", "c"));
+
+        List<String> names = service.listClusters(PROJECT, "-").stream()
+                .map(StoredCluster::getName)
+                .sorted()
+                .toList();
+        assertEquals(List.of("a", "b"), names);
+    }
+
+    @Test
+    void listOperationsWithLocationWildcardSpansAllLocations() {
+        service.createCluster(PROJECT, LOCATION, Map.of("name", "op-a"));
+        service.createCluster(PROJECT, "europe-west1", Map.of("name", "op-b"));
+
+        assertEquals(1, service.listOperations(PROJECT, "europe-west1").size());
+        assertEquals(2, service.listOperations(PROJECT, "-").size());
+    }
+
+    @Test
     void getOperationResolvesByName() {
         StoredOperation op = service.createCluster(PROJECT, LOCATION, Map.of("name", "with-op"));
         assertEquals(op.getName(), service.getOperation(PROJECT, op.getName()).getName());

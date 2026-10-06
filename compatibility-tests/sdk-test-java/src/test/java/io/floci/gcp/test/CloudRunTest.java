@@ -1,5 +1,6 @@
 package io.floci.gcp.test;
 
+import com.google.api.gax.rpc.InvalidArgumentException;
 import com.google.cloud.run.v2.Container;
 import com.google.cloud.run.v2.ContainerPort;
 import com.google.cloud.run.v2.CreateServiceRequest;
@@ -36,6 +37,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class CloudRunTest {
@@ -153,6 +155,11 @@ class CloudRunTest {
                 .forEach(services::add);
 
         assertThat(services).anyMatch(service -> service.getName().equals(SERVICE_NAME));
+
+        assertThatThrownBy(() -> servicesClient.listServices(ListServicesRequest.newBuilder()
+                        .setParent("projects/" + PROJECT_ID + "/locations/-")
+                        .build()).iterateAll().iterator().hasNext())
+                .isInstanceOf(InvalidArgumentException.class);
     }
 
     @Test

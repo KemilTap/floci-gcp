@@ -94,7 +94,7 @@ public class GkeOperationService {
         return operationStore.scan(k -> true)
                 .stream()
                 .filter(op -> project.equals(projectOf(op)))
-                .filter(op -> location.equals(op.getLocation()))
+                .filter(op -> "-".equals(location) || location.equals(op.getLocation()))
                 .toList();
     }
 

@@ -4,6 +4,7 @@ import io.quarkus.test.junit.QuarkusTest;
 import org.junit.jupiter.api.Test;
 
 import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.endsWith;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.not;
@@ -167,5 +168,24 @@ class GkeUpdateClusterRestIntegrationTest {
                 .body("currentMasterVersion", equalTo(masterBefore))
                 .body("currentNodeVersion", equalTo(masterBefore))
                 .body("nodePools[0].version", equalTo(masterBefore));
+    }
+
+    @Test
+    void listClustersWithLocationWildcardSpansAllLocations() {
+        String project = "gke-wildcard-it";
+        for (String location : new String[]{"us-central1", "europe-west1-b"}) {
+            given()
+                    .contentType("application/json")
+                    .body("{\"cluster\":{\"name\":\"c-" + location + "\"}}")
+                    .when().post("/container/v1/projects/" + project + "/locations/" + location + "/clusters")
+                    .then()
+                    .statusCode(200);
+        }
+
+        given()
+                .when().get("/container/v1/projects/" + project + "/locations/-/clusters")
+                .then()
+                .statusCode(200)
+                .body("clusters.name", containsInAnyOrder("c-us-central1", "c-europe-west1-b"));
     }
 }

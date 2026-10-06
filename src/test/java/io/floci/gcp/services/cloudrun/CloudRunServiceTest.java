@@ -104,6 +104,27 @@ class CloudRunServiceTest {
     }
 
     @Test
+    void listServicesRejectsLocationWildcard() {
+        GcpException ex = assertThrows(GcpException.class,
+                () -> service.listServices("p1", "-", 10, null));
+        assertEquals("INVALID_ARGUMENT", ex.getGcpStatus());
+    }
+
+    @Test
+    void listRevisionsWithServiceWildcardSpansServicesInLocation() {
+        service.createService("p1", "us-central1", "a", "{}", false);
+        service.createService("p1", "us-central1", "b", "{}", false);
+        service.createService("p1", "europe-west1", "c", "{}", false);
+
+        ListRevisionsResponse response = service.listRevisions(
+                "projects/p1/locations/us-central1/services/-", 10, null);
+
+        assertEquals(2, response.getRevisionsCount());
+        assertTrue(response.getRevisionsList().stream()
+                .allMatch(r -> r.getName().startsWith("projects/p1/locations/us-central1/services/")));
+    }
+
+    @Test
     void validateOnlyDoesNotPersistCreateOrDeleteMutations() {
         service.createService("p1", "us-central1", "validate", "{}", true);
         assertThrows(GcpException.class,

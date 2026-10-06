@@ -120,8 +120,9 @@ public class CloudFunctionsService {
     }
 
     public ListFunctionsResponse listFunctions(String project, String location, int pageSize, String pageToken) {
-        String prefix = parent(project, location) + "/functions/";
-        List<Function> functions = functionStore.scan(k -> k.startsWith(prefix)).stream()
+        boolean allLocations = "-".equals(location);
+        String prefix = allLocations ? "projects/" + project + "/locations/" : parent(project, location) + "/functions/";
+        List<Function> functions = functionStore.scan(k -> k.startsWith(prefix) && k.contains("/functions/")).stream()
                 .map(json -> ProtoJson.merge(json, Function.newBuilder()).build())
                 .sorted(Comparator.comparing(Function::getName))
                 .toList();

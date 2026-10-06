@@ -30,6 +30,8 @@ floci-gcp emulates the Cloud Run Admin API v2 control plane over REST JSON using
 | Get revision | `GET /v2/projects/{project}/locations/{location}/services/{service}/revisions/{revision}` |
 | Delete revision | `DELETE /v2/projects/{project}/locations/{location}/services/{service}/revisions/{revision}` |
 
+As on GCP, list services rejects the `-` location wildcard with `INVALID_ARGUMENT`. List revisions accepts `-` as the service (`.../services/-/revisions`) to list revisions across all services in the location.
+
 When execution is disabled, create, update, and delete return completed `google.longrunning.Operation` resources immediately. When execution is enabled, create, template-changing update, and delete return pending operations and complete or fail after runtime startup or cleanup. Operations can be read, listed, waited on, and deleted under `/v2/projects/{project}/locations/{location}/operations`.
 
 ## Behavior

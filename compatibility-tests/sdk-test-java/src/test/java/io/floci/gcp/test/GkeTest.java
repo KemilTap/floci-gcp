@@ -84,6 +84,12 @@ class GkeTest {
                 .build());
         assertThat(response.getClustersList())
                 .anyMatch(c -> c.getName().equals(CLUSTER));
+
+        var allLocations = client.listClusters(ListClustersRequest.newBuilder()
+                .setParent("projects/" + TestFixtures.projectId() + "/locations/-")
+                .build());
+        assertThat(allLocations.getClustersList())
+                .anyMatch(c -> c.getName().equals(CLUSTER));
     }
 
     @Test

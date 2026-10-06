@@ -210,4 +210,47 @@ class RowCodecTest {
             assertEquals(expected, out.get("ts"), "Input should be normalized to ISO string: " + input);
         }
     }
+    @Test
+    void formatForDuckNormalizesTimestampsAndPreservesOthers() {
+        TableFieldSchema tsField = new TableFieldSchema();
+        tsField.setName("ts");
+        tsField.setType("TIMESTAMP");
+
+        TableFieldSchema strField = new TableFieldSchema();
+        strField.setName("s");
+        strField.setType("STRING");
+
+        TableFieldSchema nestedField = new TableFieldSchema();
+        nestedField.setName("nested");
+        nestedField.setType("RECORD");
+        nestedField.setFields(List.of(tsField));
+
+        TableFieldSchema repeatedField = new TableFieldSchema();
+        repeatedField.setName("arr");
+        repeatedField.setType("TIMESTAMP");
+        repeatedField.setMode("REPEATED");
+
+        TableSchema schema = new TableSchema(List.of(tsField, strField, nestedField, repeatedField));
+
+        Map<String, Object> input = Map.of(
+                "ts", "2023-10-01 12:00 UTC",
+                "s", "hello",
+                "nested", Map.of("ts", "1704164645.5"),
+                "arr", List.of("2023-10-01 14:00+02:00", "not a date")
+        );
+
+        Map<String, Object> output = RowCodec.formatForDuck(schema, input);
+
+        assertEquals("2023-10-01T12:00:00.000000Z", output.get("ts"));
+        assertEquals("hello", output.get("s"));
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> nested = (Map<String, Object>) output.get("nested");
+        assertEquals("2024-01-02T03:04:05.500000Z", nested.get("ts"));
+
+        @SuppressWarnings("unchecked")
+        List<Object> arr = (List<Object>) output.get("arr");
+        assertEquals("2023-10-01T12:00:00.000000Z", arr.get(0));
+        assertEquals("not a date", arr.get(1)); // unparseable falls back to original text
+    }
 }

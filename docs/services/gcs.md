@@ -6,6 +6,21 @@ floci-gcp emulates Google Cloud Storage using the real GCP wire protocols:
 - **REST XML**, object operations (upload, download, delete, list objects)
 - **REST JSON**, bucket and object management, IAM, ACLs, notifications, HMAC keys, and uploads
 
+## IAM enforcement scope
+
+With `FLOCI_GCP_SERVICES_IAM_AUTHORIZATION_MODE=enforce`, supported REST bucket
+metadata, bucket IAM-policy, retention-lock, storage-layout, and notification
+operations evaluate stored bucket and owning-project policies. Bucket
+`testIamPermissions` returns only granted permissions. Anonymous and unrecognized
+external credentials are evaluated as anonymous, so `allUsers` bindings work.
+
+Supported REST JSON and XML object reads, writes, updates, deletes, listing,
+compose, copy, rewrite, move, restore, resumable uploads, and XML multipart
+uploads use the same evaluator. GCS applies Credential Access Boundary checks
+before IAM and retains the source principal for valid downscoped credentials.
+ACLs and GCS v2 data methods are not IAM-enforced. See
+[IAM enforcement and limitations](iam.md#opt-in-enforcement).
+
 ## Configuration
 
 | Variable | Default | Description |
@@ -291,14 +306,14 @@ The embedded DNS server resolves `*.localhost.floci.io` to floci-gcp's container
 - Resumable writes: `StartResumableWrite`, `QueryWriteStatus`
 
 Bucket responses use `projects/{projectNumber}`, matching the REST bucket's
-`projectNumber`. Project IDs remain the storage isolation key; the emulator
-currently assigns the synthetic project number `1` to buckets. This value is
-shared by all projects and is not a resolvable project alias. Continue using the
-original project ID for create and list requests; replaying `projects/1` from a
-bucket response does not resolve back to that project. Numeric project input
-resolution is an existing emulator limitation, not full Storage v2 compatibility.
-Supporting it requires unique persistent project identities and a policy for
-existing buckets with the shared synthetic number.
+`projectNumber`. The number is derived from the project ID and is the same one
+Resource Manager reports for `GET /v1/projects/{project}`, so each project gets
+its own stable number. `ListBuckets` accepts either `projects/{projectId}` or
+`projects/{projectNumber}` as the parent (REST `?project=` accepts either too).
+The owning project ID is persisted with the bucket (it is not part of the JSON
+bucket resource), so listing by project survives a restart. Buckets persisted by
+older emulator versions, which did not record it, are assigned to
+`floci-gcp.default-project-id` and report that project's number.
 
 The v2 MVP does not implement IAM policy RPCs, retention locking, rewrite,
 move, restore, resumable cancellation, bidi reads, appendable objects, write
@@ -307,7 +322,13 @@ handles, or redirection. Unsupported RPCs return gRPC `UNIMPLEMENTED`.
 **Bucket management (REST JSON):**
 
 - `CreateBucket` (names validated against the GCS naming rules; a duplicate reports
-  `reason: conflict`) (with `location`, `storageClass`, `versioning`, `lifecycle`, `cors`, `retentionPolicy`)
+  `reason: conflict`) (with `location`, `customPlacementConfig.dataLocations`, `storageClass`, `versioning`,
+  `lifecycle`, `cors`, `retentionPolicy`)
+- Every bucket resource (REST and gRPC) reports `locationType`: `dual-region` for the predefined
+  dual-regions `ASIA1`, `EUR4`, `EUR5`, `EUR7`, `EUR8` and `NAM4` or when `customPlacementConfig` names two data locations,
+  `multi-region` for `US`, `EU` and `ASIA`, otherwise `region`. `GET /b/{bucket}/storageLayout`
+  reports the same value. `customPlacementConfig` is set at creation and echoed back; like
+  `location`, it cannot be changed afterwards
 - `GetBucket`
 - `ListBuckets` (with `pageToken` pagination)
 - `UpdateBucket` / `PatchBucket`

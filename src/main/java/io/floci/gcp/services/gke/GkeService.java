@@ -293,7 +293,7 @@ public class GkeService {
 
     public List<StoredCluster> listClusters(String project, String location) {
         return clusterStore.scan(k -> true).stream()
-                .filter(c -> project.equals(c.getProject()) && location.equals(c.getLocation()))
+                .filter(c -> project.equals(c.getProject()) && ("-".equals(location) || location.equals(c.getLocation())))
                 .map(this::withNodePools)
                 .toList();
     }
@@ -721,8 +721,8 @@ public class GkeService {
         return operationService.listOperations(project, location);
     }
 
-    public StoredOperation getOperation(String operationId) {
-        return operationService.getOperation(operationId);
+    public StoredOperation getOperation(String project, String operationId) {
+        return operationService.getOperation(project, operationId);
     }
 
     public String kubeConfig(String project, String location, String clusterId) {

@@ -4,7 +4,9 @@ import io.floci.gcp.core.common.GcpException;
 import io.floci.gcp.services.bigquery.model.TableFieldSchema;
 
 import java.math.BigDecimal;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -45,10 +47,27 @@ final class SqlDialectTranslator {
             "WITH", "UNNEST", "TABLESAMPLE", "FOR", "ROWS", "RANGE", "OVER", "PARTITION", "BY",
             "NULLS", "FIRST", "LAST", "DISTINCT", "ALL", "INTERVAL", "LATERAL", "NATURAL");
 
+    /**
+     * GoogleSQL reserved keywords
+     * (https://docs.cloud.google.com/bigquery/docs/reference/standard-sql/lexical#reserved_keywords).
+     * BigQuery rejects them as an implicit alias, so they are never rewritten to one.
+     */
+    private static final Set<String> GOOGLESQL_RESERVED = Set.of(
+            "ALL", "AND", "ANY", "ARRAY", "AS", "ASC", "ASSERT_ROWS_MODIFIED", "AT", "BETWEEN", "BY", "CASE",
+            "CAST", "COLLATE", "CONTAINS", "CREATE", "CROSS", "CUBE", "CURRENT", "DEFAULT", "DEFINE", "DESC",
+            "DISTINCT", "ELSE", "END", "ENUM", "ESCAPE", "EXCEPT", "EXCLUDE", "EXISTS", "EXTRACT", "FALSE",
+            "FETCH", "FOLLOWING", "FOR", "FROM", "FULL", "GRAPH_TABLE", "GROUP", "GROUPING", "GROUPS", "HASH",
+            "HAVING", "IF", "IGNORE", "IN", "INNER", "INTERSECT", "INTERVAL", "INTO", "IS", "JOIN", "LATERAL",
+            "LEFT", "LIKE", "LIMIT", "LOOKUP", "MERGE", "NATURAL", "NEW", "NO", "NOT", "NULL", "NULLS", "OF",
+            "ON", "OR", "ORDER", "OUTER", "OVER", "PARTITION", "PRECEDING", "PROTO", "QUALIFY", "RANGE",
+            "RECURSIVE", "RESPECT", "RIGHT", "ROLLUP", "ROWS", "SELECT", "SET", "SOME", "STRUCT",
+            "TABLESAMPLE", "THEN", "TO", "TREAT", "TRUE", "UNBOUNDED", "UNION", "UNNEST", "USING", "WHEN",
+            "WHERE", "WINDOW", "WITH", "WITHIN");
+
     private static final Set<String> SHIMMED_FUNCTIONS = Set.of(
             "CAST", "SAFE_CAST", "EXTRACT", "STRUCT", "SAFE_DIVIDE", "IEEE_DIVIDE", "DIV", "IF", "COUNTIF",
             "LOGICAL_AND", "LOGICAL_OR", "ARRAY_LENGTH", "ARRAY_REVERSE", "GENERATE_ARRAY", "SPLIT", "FORMAT",
-            "TO_JSON_STRING", "JSON_VALUE", "JSON_EXTRACT_SCALAR", "JSON_QUERY", "JSON_EXTRACT",
+            "TO_JSON_STRING", "JSON_VALUE", "JSON_EXTRACT_SCALAR", "JSON_QUERY", "JSON_EXTRACT", "JSON_TYPE",
             "REGEXP_CONTAINS", "REGEXP_EXTRACT", "REGEXP_REPLACE", "CURRENT_TIMESTAMP", "CURRENT_DATE",
             "CURRENT_DATETIME", "UNIX_SECONDS", "UNIX_MILLIS", "UNIX_MICROS", "UNIX_DATE",
             "TIMESTAMP_SECONDS", "TIMESTAMP_MILLIS", "TIMESTAMP_MICROS", "TIMESTAMP_ADD", "DATETIME_ADD",
@@ -141,6 +160,52 @@ final class SqlDialectTranslator {
         tokens = new Lexer(sql).tokenize();
         stripTrailingSemicolons();
         rejectScripts();
+        quoteOffsetIdentifiers();
+    }
+
+    /**
+     * GoogleSQL does not reserve OFFSET, so {@code offset} is an ordinary name (a column, or an alias as
+     * in {@code SELECT 1 offset}), while DuckDB reserves it. Every {@code offset} that is not the
+     * {@code LIMIT … OFFSET} clause, {@code WITH OFFSET} or the {@code OFFSET(n)} array subscript
+     * becomes a quoted identifier.
+     */
+    /** {@code WITH offset AS (...)} declares a CTE named offset; {@code WITH OFFSET [AS o]} is the clause. */
+    private boolean startsCte(int afterName) {
+        if (afterName < 0 || !tokens.get(afterName).isKeyword("AS")) {
+            return false;
+        }
+        int open = nextSignificant(afterName + 1, tokens.size());
+        return open >= 0 && tokens.get(open).isPunct("(");
+    }
+
+    private void quoteOffsetIdentifiers() {
+        Deque<Boolean> limitSeenOuter = new ArrayDeque<>();
+        boolean limitSeen = false;
+        Token previous = null;
+        for (int i = 0; i < tokens.size(); i++) {
+            Token t = tokens.get(i);
+            if (t.kind == Kind.SPACE) {
+                continue;
+            }
+            if (t.isPunct("(") || t.isPunct("[")) {
+                limitSeenOuter.push(limitSeen);
+                limitSeen = false;
+            } else if (t.isPunct(")") || t.isPunct("]")) {
+                limitSeen = !limitSeenOuter.isEmpty() && limitSeenOuter.pop();
+            } else if (t.isKeyword("SELECT")) {
+                limitSeen = false;
+            } else if (t.isKeyword("LIMIT")) {
+                limitSeen = true;
+            } else if (t.isKeyword("OFFSET")) {
+                int next = nextSignificant(i + 1, tokens.size());
+                boolean keyword = limitSeen || (previous != null && previous.isKeyword("WITH") && !startsCte(next))
+                        || (next >= 0 && tokens.get(next).isPunct("("));
+                if (!keyword) {
+                    tokens.set(i, new Token(Kind.QIDENT, "`" + t.text + "`", t.text));
+                }
+            }
+            previous = t;
+        }
     }
 
     private Statement classify(String sql) {
@@ -626,6 +691,7 @@ final class SqlDialectTranslator {
                     + " emulator yet; only SELECT queries run on the SQL engine.");
         }
         collectCteNames();
+        quoteImplicitSelectAliases();
         nameAnonymousColumns();
         String rendered = render(0, tokens.size()).trim();
         return new Translation(rendered, tables, informationSchema);
@@ -677,6 +743,75 @@ final class SqlDialectTranslator {
             }
             i = nextSignificant(i + 1, n);
         }
+    }
+
+    /**
+     * Rewrites an implicit select-list alias ({@code SELECT expr name}) to {@code AS "name"}, in every
+     * SELECT. GoogleSQL accepts non-reserved words such as {@code name}, {@code value} or {@code type}
+     * as an implicit alias, while DuckDB rejects its own keywords there unless {@code AS} precedes them.
+     */
+    private void quoteImplicitSelectAliases() {
+        for (int select = 0; select < tokens.size(); select++) {
+            if (tokens.get(select).isKeyword("SELECT")) {
+                quoteImplicitAliases(select);
+            }
+        }
+    }
+
+    private void quoteImplicitAliases(int select) {
+        int first = nextSignificant(select + 1, tokens.size());
+        while (first >= 0 && (tokens.get(first).isKeyword("DISTINCT") || tokens.get(first).isKeyword("ALL"))) {
+            first = nextSignificant(first + 1, tokens.size());
+        }
+        if (first < 0 || tokens.get(first).isKeyword("AS")) {
+            return; // SELECT AS STRUCT / AS VALUE
+        }
+        int depth = 0;
+        int itemStart = first;
+        for (int i = first; i <= tokens.size(); i++) {
+            Token t = i < tokens.size() ? tokens.get(i) : null;
+            boolean itemEnds = t == null
+                    || (depth == 0 && (t.isPunct(",") || t.isPunct(")")
+                    || (t.kind == Kind.IDENT && (t.isKeyword("FROM") || CLAUSE_END_KEYWORDS.contains(t.upper()))
+                            && !followsStar(i))));
+            if (itemEnds) {
+                quoteImplicitAlias(itemStart, i);
+                if (t == null || !t.isPunct(",")) {
+                    return;
+                }
+                itemStart = i + 1;
+            } else if (t.isPunct("(") || t.isPunct("[")) {
+                depth++;
+            } else if (t.isPunct(")") || t.isPunct("]")) {
+                depth--;
+            }
+        }
+    }
+
+    /** {@code * EXCEPT (...)} is a column filter, not the EXCEPT set operation. */
+    private boolean followsStar(int index) {
+        int previous = index - 1;
+        while (previous >= 0 && tokens.get(previous).kind == Kind.SPACE) {
+            previous--;
+        }
+        return previous >= 0 && tokens.get(previous).isPunct("*") && tokens.get(index).isKeyword("EXCEPT");
+    }
+
+    private void quoteImplicitAlias(int start, int end) {
+        int alias = -1;
+        for (int i = start; i < end; i++) {
+            if (tokens.get(i).kind != Kind.SPACE) {
+                alias = i;
+            }
+        }
+        if (alias < 0 || tokens.get(alias).kind != Kind.IDENT || GOOGLESQL_RESERVED.contains(tokens.get(alias).upper())
+                || !endsWithImplicitAlias(significant(start, end))) {
+            return;
+        }
+        Token last = tokens.get(alias);
+        tokens.set(alias, new Token(Kind.QIDENT, "`" + last.text + "`", last.text));
+        tokens.add(alias, new Token(Kind.SPACE, " ", " "));
+        tokens.add(alias, new Token(Kind.IDENT, "AS", "AS"));
     }
 
     /**
@@ -769,16 +904,65 @@ final class SqlDialectTranslator {
                 return false;
             }
         }
-        if (item.size() >= 2) {
-            Token last = item.getLast();
-            Token previous = item.get(item.size() - 2);
-            boolean lastIsName = last.kind == Kind.QIDENT
-                    || (last.kind == Kind.IDENT && !NON_ALIAS_KEYWORDS.contains(last.upper()));
-            if (lastIsName && (previous.isKeyword("AS") || isAliasable(previous))) {
-                return false; // explicit or implicit alias
-            }
+        if (item.size() >= 2 && ((isName(item.getLast()) && item.get(item.size() - 2).isKeyword("AS"))
+                || endsWithImplicitAlias(item))) {
+            return false; // explicit or implicit alias
         }
         return true;
+    }
+
+    private static boolean isName(Token t) {
+        return t.kind == Kind.QIDENT || (t.kind == Kind.IDENT && !NON_ALIAS_KEYWORDS.contains(t.upper()));
+    }
+
+    /**
+     * True when a select item ends in an implicit alias ({@code expr alias}). The last word is not an
+     * alias when it is an operand of an operator keyword ({@code a LIKE b}, {@code SUM(x) OVER w}) or
+     * part of an interval literal ({@code INTERVAL 1 DAY}, {@code INTERVAL '1:2' HOUR TO MINUTE}).
+     */
+    private static boolean endsWithImplicitAlias(List<Token> item) {
+        if (item.size() < 2) {
+            return false;
+        }
+        Token previous = item.get(item.size() - 2);
+        if (!isName(item.getLast()) || !isAliasable(previous)
+                || (previous.kind == Kind.IDENT && NON_ALIAS_KEYWORDS.contains(previous.upper())
+                        && !previous.isKeyword("END"))) {
+            return false;
+        }
+        return !endsInsideInterval(item);
+    }
+
+    private static boolean endsInsideInterval(List<Token> item) {
+        for (int k = 0; k < item.size(); k++) {
+            if (!item.get(k).isKeyword("INTERVAL")) {
+                continue;
+            }
+            int end = k + 1;
+            if (end < item.size() && item.get(end).isPunct("(")) {
+                end = closingParen(item, end);
+            }
+            end++; // date part
+            if (end + 2 < item.size() && item.get(end + 1).isKeyword("TO")) {
+                end += 2;
+            }
+            if (end >= item.size() - 1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static int closingParen(List<Token> item, int open) {
+        int depth = 0;
+        for (int i = open; i < item.size(); i++) {
+            if (item.get(i).isPunct("(")) {
+                depth++;
+            } else if (item.get(i).isPunct(")") && --depth == 0) {
+                return i;
+            }
+        }
+        return item.size() - 1;
     }
 
     private static boolean isAliasable(Token beforeLast) {
@@ -1256,6 +1440,12 @@ final class SqlDialectTranslator {
             case "JSON_QUERY", "JSON_EXTRACT" -> a.size() == 1
                     ? "json_extract(" + a.getFirst() + ", '$')"
                     : "json_extract(" + String.join(", ", a) + ")";
+            // DuckDB names the physical type (UBIGINT, VARCHAR, ...); BigQuery returns the JSON type name.
+            case "JSON_TYPE" -> args(a, 1, name, "(CASE json_type(" + at(a, 0) + ")"
+                    + " WHEN 'OBJECT' THEN 'object' WHEN 'ARRAY' THEN 'array' WHEN 'VARCHAR' THEN 'string'"
+                    + " WHEN 'BOOLEAN' THEN 'boolean' WHEN 'NULL' THEN 'null'"
+                    + " WHEN 'BIGINT' THEN 'number' WHEN 'UBIGINT' THEN 'number' WHEN 'HUGEINT' THEN 'number'"
+                    + " WHEN 'DOUBLE' THEN 'number' END)");
             case "REGEXP_CONTAINS" -> "regexp_matches(" + String.join(", ", a) + ")";
             case "REGEXP_EXTRACT" -> args(a, 2, name, "regexp_extract(" + at(a, 0) + ", " + at(a, 1) + ", "
                     + (hasCaptureGroup(open, close) ? "1" : "0") + ")");

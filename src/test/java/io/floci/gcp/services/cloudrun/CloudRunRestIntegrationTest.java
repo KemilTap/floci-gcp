@@ -215,4 +215,12 @@ class CloudRunRestIntegrationTest {
                 .body("containers[0].ports[0].containerPort", equalTo(9090));
     }
 
+    @Test
+    void listServicesRejectsLocationWildcard() {
+        given()
+                .when().get("/v2/projects/run-it-wildcard/locations/-/services")
+                .then()
+                .statusCode(400)
+                .body("error.status", equalTo("INVALID_ARGUMENT"));
+    }
 }

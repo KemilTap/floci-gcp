@@ -56,6 +56,24 @@ class IamTest {
 
         assertThat(resp.path("email").asText()).isEqualTo(email);
         assertThat(resp.path("displayName").asText()).isEqualTo("Java Test SA");
+
+        JsonNode viaWildcard = get("/v1/projects/-/serviceAccounts/" + email);
+        assertThat(viaWildcard.path("name").asText())
+                .isEqualTo("projects/" + PROJECT_ID + "/serviceAccounts/" + email);
+    }
+
+    @Test
+    @Order(2)
+    void missingServiceAccountUnderWildcardIsPermissionDenied() throws Exception {
+        HttpRequest req = HttpRequest.newBuilder()
+                .uri(URI.create(TestFixtures.endpoint() + "/v1/projects/-/serviceAccounts/fake@example.com"))
+                .GET()
+                .build();
+        HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+
+        assertThat(resp.statusCode()).isEqualTo(403);
+        assertThat(json.readTree(resp.body()).path("error").path("status").asText())
+                .isEqualTo("PERMISSION_DENIED");
     }
 
     @Test
@@ -100,6 +118,9 @@ class IamTest {
             }
         }
         assertThat(found).isTrue();
+
+        JsonNode viaWildcard = get("/v1/projects/-/serviceAccounts/" + email + "/keys/" + createdKeyId);
+        assertThat(viaWildcard.path("keyId").asText()).isEqualTo(createdKeyId);
     }
 
     @Test

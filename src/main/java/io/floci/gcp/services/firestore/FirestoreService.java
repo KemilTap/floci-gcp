@@ -41,6 +41,7 @@ import java.util.OptionalInt;
 import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
 import java.util.stream.Stream;
 
 @ApplicationScoped
@@ -317,11 +318,9 @@ public class FirestoreService {
 
     public List<StoredDocument> runQuery(String parent, StructuredQuery query) {
         LOG.debugf("runQuery parent=%s", parent);
-        String collectionId = query.getFromCount() > 0 ? query.getFrom(0).getCollectionId() : "";
-        String prefix = parent + "/" + collectionId + "/";
-
-        List<StoredDocument> results = documentStore.scan(k -> k.startsWith(prefix)
-                && k.substring(prefix.length()).indexOf('/') < 0);
+        StructuredQuery.CollectionSelector from = query.getFromCount() > 0
+                ? query.getFrom(0) : StructuredQuery.CollectionSelector.getDefaultInstance();
+        List<StoredDocument> results = documentStore.scan(inCollection(parent, from));
 
         if (query.hasWhere()) {
             results = results.stream()
@@ -333,6 +332,26 @@ public class FirestoreService {
         results = sortByOrderBy(results, query);
         results = applyCursors(results, query);
         return applyLimitAndOffset(results, query);
+    }
+
+    private static Predicate<String> inCollection(String parent,
+            StructuredQuery.CollectionSelector from) {
+        String collectionId = from.getCollectionId();
+        if (!from.getAllDescendants()) {
+            String prefix = parent + "/" + collectionId + "/";
+            return name -> name.startsWith(prefix) && name.indexOf('/', prefix.length()) < 0;
+        }
+        String prefix = parent + "/";
+        return name -> {
+            if (!name.startsWith(prefix)) {
+                return false;
+            }
+            int idEnd = name.lastIndexOf('/');
+            int idStart = name.lastIndexOf('/', idEnd - 1) + 1;
+            return idStart >= prefix.length()
+                    && idEnd - idStart == collectionId.length()
+                    && name.startsWith(collectionId, idStart);
+        };
     }
 
     /**

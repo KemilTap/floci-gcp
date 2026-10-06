@@ -1,12 +1,17 @@
 package io.floci.gcp.services.iam;
 
+import io.floci.gcp.services.iam.authorization.IamAuthorizationAdapter;
+import io.floci.gcp.services.iam.authorization.IamAuthorizationRegistry;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
-/** The finite predefined-role subset supported by the IAM evaluation milestone. */
+/** Finite predefined-role catalog with service-owned permission contributions. */
 @ApplicationScoped
 public class IamRoleCatalog {
 
@@ -35,6 +40,28 @@ public class IamRoleCatalog {
                 "roles/storage.objectCreator", OBJECT_CREATOR,
                 "roles/storage.objectAdmin", OBJECT_ADMIN,
                 "roles/storage.admin", STORAGE_ADMIN));
+    }
+
+    @Inject
+    public IamRoleCatalog(IamAuthorizationRegistry registry) {
+        Map<String, Set<String>> permissions = new LinkedHashMap<>(new IamRoleCatalog().permissionsByRole);
+        for (IamAuthorizationAdapter adapter : registry.adapters()) {
+            adapter.roles().forEach((role, grants) -> {
+                if (permissions.putIfAbsent(role, Set.copyOf(grants)) != null) {
+                    throw new IllegalStateException("Duplicate IAM role: " + role);
+                }
+            });
+        }
+        for (IamAuthorizationAdapter adapter : registry.adapters()) {
+            adapter.basicRoles().forEach((role, grants) -> permissions.merge(role, Set.copyOf(grants),
+                    (existing, additional) -> Stream.concat(existing.stream(), additional.stream())
+                            .collect(Collectors.toUnmodifiableSet())));
+        }
+        permissionsByRole = Map.copyOf(permissions);
+    }
+
+    public boolean contains(String role) {
+        return permissionsByRole.containsKey(role);
     }
 
     IamRoleCatalog(Map<String, Set<String>> permissionsByRole) {

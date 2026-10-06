@@ -1,11 +1,11 @@
 package io.floci.gcp.services.resourcemanager;
 
+import io.floci.gcp.core.common.ProjectNumbers;
 import io.quarkus.test.junit.QuarkusTest;
 import org.junit.jupiter.api.Test;
 
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.equalTo;
-import static org.hamcrest.Matchers.matchesPattern;
 import static org.hamcrest.Matchers.notNullValue;
 
 @QuarkusTest
@@ -20,7 +20,7 @@ class ResourceManagerRestIntegrationTest {
                 .body("projectId", equalTo("crm-test"))
                 .body("name", equalTo("crm-test"))
                 .body("lifecycleState", equalTo("ACTIVE"))
-                .body("projectNumber", matchesPattern("\\d+"))
+                .body("projectNumber", equalTo(ProjectNumbers.of("crm-test")))
                 .body("createTime", notNullValue())
                 .extract().path("projectNumber");
 

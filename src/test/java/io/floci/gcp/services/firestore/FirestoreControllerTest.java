@@ -19,6 +19,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -153,6 +154,35 @@ class FirestoreControllerTest {
 
         assertNull(observer.error);
         assertEquals(Set.of("a", "b"), service.getDocument(name).orElseThrow().getFields().keySet());
+    }
+
+    @Test
+    void collectionGroupQueryStreamsMatchingDocumentsAtEveryDepth() {
+        seedDocument(PARENT + "/users/alice/orders/o1");
+        seedDocument(PARENT + "/shops/s1/branches/b1/orders/o2");
+        seedDocument(PARENT + "/orders/o3");
+        seedDocument(PARENT + "/users/alice/returns/r1");
+        seedDocument(PARENT + "/users/alice/ordersArchive/o4");
+        CapturingObserver<RunQueryResponse> observer = new CapturingObserver<>();
+
+        controller.runQuery(RunQueryRequest.newBuilder()
+                .setParent(PARENT)
+                .setStructuredQuery(StructuredQuery.newBuilder()
+                        .addFrom(StructuredQuery.CollectionSelector.newBuilder()
+                                .setCollectionId("orders")
+                                .setAllDescendants(true)))
+                .build(), observer);
+
+        assertNull(observer.error);
+        assertTrue(observer.completed);
+        assertEquals(Set.of(
+                        PARENT + "/users/alice/orders/o1",
+                        PARENT + "/shops/s1/branches/b1/orders/o2",
+                        PARENT + "/orders/o3"),
+                observer.messages.stream()
+                        .filter(RunQueryResponse::hasDocument)
+                        .map(resp -> resp.getDocument().getName())
+                        .collect(Collectors.toSet()));
     }
 
     private static Document documentWith(String name, String field, String value) {

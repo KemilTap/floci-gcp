@@ -171,7 +171,7 @@ public class IamController {
 
     @SuppressWarnings("unchecked")
     private Response handleCustomMethod(IamPath p, Map<String, Object> body) {
-        String resource = "projects/" + p.project() + "/serviceAccounts/" + p.identifier();
+        String resource = service.serviceAccountResource(p.project(), p.identifier());
         return switch (p.customMethod()) {
             case "getIamPolicy" -> {
                 StoredPolicy policy = service.getPolicy(resource);

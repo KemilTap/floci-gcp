@@ -172,16 +172,9 @@ public class GcsBucketController {
         response.put("kind", "storage#storageLayout");
         response.put("bucket", bucket);
         response.put("location", location);
-        response.put("locationType", locationType(location));
+        response.put("locationType", b.getLocationType());
         response.put("hierarchicalNamespace", Map.of("enabled", false));
         return Response.ok(response).build();
-    }
-
-    private static String locationType(String location) {
-        return switch (location.toUpperCase()) {
-            case "US", "EU", "ASIA" -> "multi-region";
-            default -> "region";
-        };
     }
 
     // ── Bucket IAM ────────────────────────────────────────────────────────────

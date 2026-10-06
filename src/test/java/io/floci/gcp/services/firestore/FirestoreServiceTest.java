@@ -435,6 +435,84 @@ class FirestoreServiceTest {
     }
 
     @Test
+    void collectionGroupQueryMatchesSubcollectionsAtAnyDepth() {
+        writeCollectionGroupFixture();
+
+        List<String> names = service.runQuery(DB + "/documents", collectionGroupQuery("sub").build())
+                .stream().map(StoredDocument::getName).sorted().toList();
+
+        assertEquals(List.of(
+                DB + "/documents/p/1/sub/s1",
+                DB + "/documents/p/1/sub/s1/deeper/d1/sub/s3",
+                DB + "/documents/p/2/sub/s2",
+                DB + "/documents/sub/top"), names);
+    }
+
+    @Test
+    void collectionGroupQueryIsScopedToParentDocument() {
+        writeCollectionGroupFixture();
+
+        List<String> names = service.runQuery(DB + "/documents/p/1", collectionGroupQuery("sub").build())
+                .stream().map(StoredDocument::getName).sorted().toList();
+
+        assertEquals(List.of(
+                DB + "/documents/p/1/sub/s1",
+                DB + "/documents/p/1/sub/s1/deeper/d1/sub/s3"), names);
+    }
+
+    @Test
+    void collectionGroupQueryAppliesWhereFilter() {
+        writeCollectionGroupFixture();
+
+        StructuredQuery query = collectionGroupQuery("sub")
+                .setWhere(StructuredQuery.Filter.newBuilder()
+                        .setFieldFilter(StructuredQuery.FieldFilter.newBuilder()
+                                .setField(StructuredQuery.FieldReference.newBuilder().setFieldPath("k"))
+                                .setOp(StructuredQuery.FieldFilter.Operator.EQUAL)
+                                .setValue(Value.newBuilder().setStringValue("match"))))
+                .build();
+
+        List<String> names = service.runQuery(DB + "/documents", query)
+                .stream().map(StoredDocument::getName).sorted().toList();
+
+        assertEquals(List.of(
+                DB + "/documents/p/1/sub/s1/deeper/d1/sub/s3",
+                DB + "/documents/p/2/sub/s2"), names);
+    }
+
+    @Test
+    void collectionQueryWithoutAllDescendantsReturnsOnlyImmediateChildren() {
+        writeCollectionGroupFixture();
+
+        StructuredQuery query = StructuredQuery.newBuilder()
+                .addFrom(StructuredQuery.CollectionSelector.newBuilder().setCollectionId("sub"))
+                .build();
+
+        List<String> names = service.runQuery(DB + "/documents/p/1", query)
+                .stream().map(StoredDocument::getName).toList();
+
+        assertEquals(List.of(DB + "/documents/p/1/sub/s1"), names);
+    }
+
+    private StructuredQuery.Builder collectionGroupQuery(String collectionId) {
+        return StructuredQuery.newBuilder()
+                .addFrom(StructuredQuery.CollectionSelector.newBuilder()
+                        .setCollectionId(collectionId)
+                        .setAllDescendants(true));
+    }
+
+    private void writeCollectionGroupFixture() {
+        service.applyWrite(upsert(DB + "/documents/p/1", "k", "match"), Instant.now());
+        service.applyWrite(upsert(DB + "/documents/p/1/sub/s1", "k", "other"), Instant.now());
+        service.applyWrite(upsert(DB + "/documents/p/1/sub/s1/deeper/d1", "k", "match"), Instant.now());
+        service.applyWrite(upsert(DB + "/documents/p/1/sub/s1/deeper/d1/sub/s3", "k", "match"), Instant.now());
+        service.applyWrite(upsert(DB + "/documents/p/2/sub/s2", "k", "match"), Instant.now());
+        service.applyWrite(upsert(DB + "/documents/p/2/subway/w1", "k", "match"), Instant.now());
+        service.applyWrite(upsert(DB + "/documents/p/2/other/o1", "k", "match"), Instant.now());
+        service.applyWrite(upsert(DB + "/documents/sub/top", "k", "other"), Instant.now());
+    }
+
+    @Test
     void listCollectionIdsReturnsCollections() {
         Document doc = Document.newBuilder()
                 .setName(DB + "/documents/myCollection/docA")

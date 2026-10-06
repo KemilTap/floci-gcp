@@ -25,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: graalvm/setup-graalvm@5298d94fb55a4f185c602eeac5de1b553882abe2 # v1
+      - uses: graalvm/setup-graalvm@0426e2e191540e8514dff98dc52a5f5146a2a276 # v1
         with:
           java-version: '25'
           distribution: 'mandrel'
@@ -55,10 +55,10 @@ jobs:
           cp target/*-runner native/arm64/application
           cp target/*.so native/arm64/ 2>/dev/null || true
 
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Build native Docker image
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: docker/Dockerfile.native-package
@@ -146,10 +146,10 @@ jobs:
         with:
           sparse-checkout: compatibility-tests
 
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Build test image
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: compatibility-tests/${{ matrix.test }}
           load: true
@@ -174,12 +174,70 @@ jobs:
             -v "$(pwd)/test-results:/results" \
             compat-${{ matrix.test }}
 
+      - name: Run downscoped IAM SDK test
+        if: matrix.test == 'sdk-test-java'
+        timeout-minutes: 10
+        run: |
+          docker stop floci-gcp
+          docker rm floci-gcp
+          DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
+          docker run -d --name floci-gcp --network compat-net \
+            --network-alias container.localhost.floci.io \
+            -p 4588:4588 \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            --group-add "$DOCKER_GID" \
+            -e FLOCI_GCP_BASE_URL=http://floci-gcp:4588 \
+            -e FLOCI_GCP_HOSTNAME=floci-gcp \
+            -e FLOCI_GCP_SERVICES_DOCKER_NETWORK=compat-net \
+            -e FLOCI_GCP_SERVICES_KAFKA_MOCK=true \
+            -e FLOCI_GCP_SERVICES_CLOUDRUN_MOCK=false \
+            -e FLOCI_GCP_SERVICES_IAM_AUTHORIZATION_MODE=enforce \
+            -e FLOCI_GCP_SERVICES_IAM_BOOTSTRAP_ADMIN_MEMBER=allUsers \
+            floci-gcp:test-native
+          timeout 60 bash -c 'until curl -sf http://localhost:4588/health >/dev/null 2>&1; do sleep 1; done'
+          docker run --rm --network compat-net \
+            -e FLOCI_GCP_ENDPOINT=http://floci-gcp:4588 \
+            -e FLOCI_ENDPOINT=http://floci-gcp:4588 \
+            -e FLOCI_HOST=floci-gcp:4588 \
+            -e FLOCI_PROJECT=test-project \
+            -e FLOCI_GCP_CLOUDRUN_EXECUTION_ENABLED=true \
+            -e FLOCI_GCP_IAM_ENFORCEMENT_COMPAT=true \
+            -v "$(pwd)/test-results:/results" \
+            --entrypoint /bin/bash \
+            compat-sdk-test-java \
+            -c 'mvn test -Dtest=GcsDownscopedTokenTest#storageClientEnforcesIamPolicyForDownscopedImpersonatedToken; status=$?; mkdir -p /results; report=target/surefire-reports/TEST-io.floci.gcp.test.GcsDownscopedTokenTest.xml; if [ -f "$report" ]; then cp "$report" /results/TEST-io.floci.gcp.test.GcsDownscopedTokenTest-downscoped-iam.xml; fi; exit $status'
+
+      - name: Verify IAM denials with Java SDK clients
+        if: matrix.test == 'sdk-test-java'
+        timeout-minutes: 5
+        run: |
+          docker run -d --name floci-gcp-iam --network compat-net -p 4590:4588 \
+            -e FLOCI_GCP_SERVICES_IAM_AUTHORIZATION_MODE=enforce \
+            -e FLOCI_GCP_SERVICES_KAFKA_MOCK=true \
+            -e FLOCI_GCP_SERVICES_CLOUDSQL_MOCK=true \
+            -e FLOCI_GCP_SERVICES_CLOUDRUN_MOCK=true \
+            -e FLOCI_GCP_SERVICES_BIGQUERY_MOCK=true \
+            floci-gcp:test-native
+          for _ in $(seq 1 30); do
+            if curl -fsS http://localhost:4590/health; then break; fi
+            sleep 1
+          done
+          curl -fsS http://localhost:4590/health
+          mkdir -p test-results/iam
+          docker run --rm --network compat-net \
+            -e FLOCI_GCP_ENDPOINT=http://floci-gcp-iam:4588 \
+            -e FLOCI_GCP_IAM_TEST_ENFORCEMENT=true \
+            -v "$(pwd)/test-results/iam:/results" \
+            --entrypoint /bin/bash compat-sdk-test-java -c \
+            'mvn test -Dtest=IamEnforcementTest; status=$?; cp target/surefire-reports/TEST-*IamEnforcementTest.xml /results/; exit $status'
       - name: Generate test summary
         if: always() && steps.tests.outcome != 'skipped'
         uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2
         with:
-          paths: test-results/*.xml
+          paths: test-results/**/*.xml
 
       - name: Dump floci-gcp logs
         if: failure() || cancelled()
-        run: docker logs floci-gcp
+        run: |
+          docker logs floci-gcp
+          if docker inspect floci-gcp-iam >/dev/null 2>&1; then docker logs floci-gcp-iam; fi

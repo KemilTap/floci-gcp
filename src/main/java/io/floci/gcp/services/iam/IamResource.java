@@ -8,7 +8,7 @@ import java.util.Objects;
  * <p>The policy lookup key is deliberately distinct from the IAM resource name. Storage keys
  * remain an implementation detail and must not be exposed to CEL expressions.</p>
  */
-public record IamResource(String service, String type, String name, String policyResource) {
+public record IamResource(String service, String type, String name, String policyResource, String projectResource) {
 
     private static final String STORAGE_SERVICE = "storage.googleapis.com";
     private static final String BUCKET_TYPE = STORAGE_SERVICE + "/Bucket";
@@ -21,22 +21,60 @@ public record IamResource(String service, String type, String name, String polic
         Objects.requireNonNull(policyResource, "policyResource");
     }
 
+    public IamResource(String service, String type, String name, String policyResource) {
+        this(service, type, name, policyResource, null);
+    }
+
+    public static IamResource project(String name) {
+        String project = projectName(name);
+        return new IamResource("cloudresourcemanager.googleapis.com",
+                "cloudresourcemanager.googleapis.com/Project", project, project, project);
+    }
+
+    public static IamResource projectChild(String service, String type, String name, String policyResource) {
+        return new IamResource(service, service + "/" + type, name, policyResource, projectName(name));
+    }
+
+    public static String projectName(String name) {
+        String[] parts = name.split("/", -1);
+        if (parts.length < 2 || !parts[0].equals("projects") || parts[1].isBlank()) {
+            throw new IllegalArgumentException("Expected projects/{project} resource: " + name);
+        }
+        return "projects/" + parts[1];
+    }
+
     public static IamResource gcsBucket(String bucket) {
+        return gcsBucket(bucket, null);
+    }
+
+    public static IamResource gcsBucket(String bucket, String projectId) {
         requireBucket(bucket);
         return new IamResource(STORAGE_SERVICE, BUCKET_TYPE,
-                "projects/_/buckets/" + bucket, "buckets/" + bucket);
+                "projects/_/buckets/" + bucket, "buckets/" + bucket, gcsProjectName(projectId));
     }
 
     public static IamResource gcsObject(String bucket, String object) {
+        return gcsObject(bucket, object, null);
+    }
+
+    public static IamResource gcsObject(String bucket, String object, String projectId) {
         requireBucket(bucket);
         Objects.requireNonNull(object, "object");
         return new IamResource(STORAGE_SERVICE, OBJECT_TYPE,
-                "projects/_/buckets/" + bucket + "/objects/" + object, "buckets/" + bucket);
+                "projects/_/buckets/" + bucket + "/objects/" + object,
+                "buckets/" + bucket, gcsProjectName(projectId));
     }
 
     private static void requireBucket(String bucket) {
         if (bucket == null || bucket.isBlank()) {
             throw new IllegalArgumentException("bucket must not be blank");
         }
+    }
+
+    private static String gcsProjectName(String projectId) {
+        if (projectId == null || projectId.isBlank()) {
+            return null;
+        }
+        return projectId.startsWith("projects/") ? projectName(projectId) : "projects/" + projectId;
     }
 }

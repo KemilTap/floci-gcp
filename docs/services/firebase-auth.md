@@ -104,4 +104,4 @@ the API hostname as a **path**, which floci-gcp serves directly on its single po
   unimplemented operations).
 - Passwords are stored in the emulator's literal `fakeHash:salt=...:password=...` format.
   This is a development fixture, not a security boundary, and is identical to the official emulator.
-- `securetoken` responses report `project_id: "12345"`, the emulator's hardcoded project number.
+- `securetoken` responses report `project_id` as the project number, the same number Resource Manager reports for the default project (the Firebase emulator hardcodes `"12345"`).

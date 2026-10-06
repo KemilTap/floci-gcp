@@ -33,6 +33,7 @@ class GkeServiceTest {
 
     private static final String PROJECT = "test-project";
     private static final String LOCATION = "us-central1";
+    private static final String DEFAULT_PROJECT = "default-project";
 
     @Mock
     EmulatorConfig config;
@@ -44,6 +45,7 @@ class GkeServiceTest {
     GkeClusterManager clusterManager;
 
     private GkeService service;
+    private InMemoryStorage<String, StoredOperation> operationStore;
 
     @BeforeEach
     void setUp() {
@@ -52,8 +54,8 @@ class GkeServiceTest {
         when(gkeConfig.mock()).thenReturn(true);
         when(config.baseUrl()).thenReturn("http://localhost:4588");
 
-        GkeOperationService operationService =
-                new GkeOperationService(new InMemoryStorage<String, StoredOperation>());
+        operationStore = new InMemoryStorage<>();
+        GkeOperationService operationService = new GkeOperationService(operationStore, DEFAULT_PROJECT);
         service = new GkeService(new InMemoryStorage<String, StoredCluster>(),
                 new InMemoryStorage<String, StoredNodePool>(), config,
                 clusterManager, operationService, null);
@@ -99,9 +101,59 @@ class GkeServiceTest {
     }
 
     @Test
+    void listClustersWithLocationWildcardSpansAllLocationsOfProject() {
+        service.createCluster(PROJECT, LOCATION, Map.of("name", "a"));
+        service.createCluster(PROJECT, "europe-west1-b", Map.of("name", "b"));
+        service.createCluster("other-project", LOCATION, Map.of("name", "c"));
+
+        List<String> names = service.listClusters(PROJECT, "-").stream()
+                .map(StoredCluster::getName)
+                .sorted()
+                .toList();
+        assertEquals(List.of("a", "b"), names);
+    }
+
+    @Test
+    void listOperationsWithLocationWildcardSpansAllLocations() {
+        service.createCluster(PROJECT, LOCATION, Map.of("name", "op-a"));
+        service.createCluster(PROJECT, "europe-west1", Map.of("name", "op-b"));
+
+        assertEquals(1, service.listOperations(PROJECT, "europe-west1").size());
+        assertEquals(2, service.listOperations(PROJECT, "-").size());
+    }
+
+    @Test
     void getOperationResolvesByName() {
         StoredOperation op = service.createCluster(PROJECT, LOCATION, Map.of("name", "with-op"));
-        assertEquals(op.getName(), service.getOperation(op.getName()).getName());
+        assertEquals(op.getName(), service.getOperation(PROJECT, op.getName()).getName());
+    }
+
+    @Test
+    void operationsAreScopedToTheirProject() {
+        StoredOperation mine = service.createCluster(PROJECT, LOCATION, Map.of("name", "mine"));
+        StoredOperation theirs = service.createCluster("other-project", LOCATION, Map.of("name", "theirs"));
+
+        assertEquals(List.of(mine.getName()),
+                service.listOperations(PROJECT, LOCATION).stream().map(StoredOperation::getName).toList());
+        assertEquals(List.of(theirs.getName()),
+                service.listOperations("other-project", LOCATION).stream().map(StoredOperation::getName).toList());
+
+        GcpException ex = assertThrows(GcpException.class,
+                () -> service.getOperation(PROJECT, theirs.getName()));
+        assertEquals(404, ex.getHttpStatus());
+        assertEquals(theirs.getName(), service.getOperation("other-project", theirs.getName()).getName());
+    }
+
+    @Test
+    void legacyOperationWithoutSelfLinkBelongsToDefaultProject() {
+        StoredOperation legacy = new StoredOperation("operation-legacy", OperationType.CREATE_CLUSTER, "DONE",
+                LOCATION, "projects/x/locations/us-central1/clusters/c", null, "t", "t");
+        operationStore.put(legacy.getName(), legacy);
+
+        assertEquals(1, service.listOperations(DEFAULT_PROJECT, LOCATION).size());
+        assertTrue(service.listOperations(PROJECT, LOCATION).isEmpty());
+        assertEquals("operation-legacy", service.getOperation(DEFAULT_PROJECT, "operation-legacy").getName());
+        assertThrows(GcpException.class, () -> service.getOperation(PROJECT, "operation-legacy"));
     }
 
     @Test
@@ -549,7 +601,7 @@ class GkeServiceTest {
         clusterStore.put("projects/" + PROJECT + "/locations/" + LOCATION + "/clusters/legacy-cluster",
                 legacyCluster);
         GkeOperationService operationService =
-                new GkeOperationService(new InMemoryStorage<String, StoredOperation>());
+                new GkeOperationService(new InMemoryStorage<String, StoredOperation>(), DEFAULT_PROJECT);
         GkeService migratingService = new GkeService(clusterStore, new InMemoryStorage<String, StoredNodePool>(),
                 config, clusterManager, operationService, null);
 
@@ -578,7 +630,7 @@ class GkeServiceTest {
         // replay it and resurrect deleted pools. The read path must leave the record untouched.
         InMemoryStorage<String, StoredCluster> clusterStore = new InMemoryStorage<>();
         GkeOperationService operationService =
-                new GkeOperationService(new InMemoryStorage<String, StoredOperation>());
+                new GkeOperationService(new InMemoryStorage<String, StoredOperation>(), DEFAULT_PROJECT);
         GkeService readService = new GkeService(clusterStore,
                 new InMemoryStorage<String, StoredNodePool>(), config, clusterManager, operationService, null);
         readService.createCluster(PROJECT, LOCATION, Map.of("name", "read-only"));
@@ -624,7 +676,7 @@ class GkeServiceTest {
         poolStore.put(clusterKey + "/nodePools/pool-a", alreadyMigrated);
 
         GkeOperationService operationService =
-                new GkeOperationService(new InMemoryStorage<String, StoredOperation>());
+                new GkeOperationService(new InMemoryStorage<String, StoredOperation>(), DEFAULT_PROJECT);
         GkeService resuming = new GkeService(clusterStore, poolStore, config,
                 clusterManager, operationService, null);
         resuming.init();
@@ -873,7 +925,7 @@ class GkeServiceTest {
             poolStore.put(clusterName + "/nodePools/" + pool[0], p);
         }
         GkeService restarted = new GkeService(clusterStore, poolStore, config, clusterManager,
-                new GkeOperationService(new InMemoryStorage<String, StoredOperation>()), null);
+                new GkeOperationService(new InMemoryStorage<String, StoredOperation>(), DEFAULT_PROJECT), null);
 
         restarted.init();
 

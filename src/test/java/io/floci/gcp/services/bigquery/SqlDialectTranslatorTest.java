@@ -147,7 +147,7 @@ class SqlDialectTranslatorTest {
 
     @Test
     void starAndImplicitAliasesKeepTheirNames() {
-        assertEquals("SELECT * EXCLUDE (secret), UPPER(name) upper_name FROM \"ds\".\"t\"",
+        assertEquals("SELECT * EXCLUDE (secret), UPPER(name) AS \"upper_name\" FROM \"ds\".\"t\"",
                 sql("SELECT * EXCEPT (secret), UPPER(name) upper_name FROM ds.t"));
     }
 
@@ -166,6 +166,70 @@ class SqlDialectTranslatorTest {
         assertEquals("SELECT regexp_replace(s, 'a', 'b', 'g') AS x", sql("SELECT REGEXP_REPLACE(s, 'a', 'b') AS x"));
         assertEquals("SELECT {'a': 1, 'b': 'x'} AS s", sql("SELECT STRUCT(1 AS a, 'x' AS b) AS s"));
         assertEquals("SELECT len(arr) AS n", sql("SELECT ARRAY_LENGTH(arr) AS n"));
+    }
+
+    @Test
+    void jsonTypeMapsDuckDbTypesToBigQueryJsonTypeNames() {
+        assertEquals("SELECT (CASE json_type(j)"
+                        + " WHEN 'OBJECT' THEN 'object' WHEN 'ARRAY' THEN 'array' WHEN 'VARCHAR' THEN 'string'"
+                        + " WHEN 'BOOLEAN' THEN 'boolean' WHEN 'NULL' THEN 'null'"
+                        + " WHEN 'BIGINT' THEN 'number' WHEN 'UBIGINT' THEN 'number' WHEN 'HUGEINT' THEN 'number'"
+                        + " WHEN 'DOUBLE' THEN 'number' END) AS t",
+                sql("SELECT JSON_TYPE(j) AS t"));
+    }
+
+    @Test
+    void implicitSelectAliasesBecomeQuotedAsAliases() {
+        assertEquals("SELECT 1 AS \"sample\", x AS \"name\", COUNT(*) AS \"value\" FROM \"ds\".\"t\"",
+                sql("SELECT 1 sample, x name, COUNT(*) value FROM ds.t"));
+        assertEquals("SELECT name FROM (SELECT 'a' AS \"name\", (CASE WHEN x THEN 1 ELSE 2 END) AS \"type\" FROM \"ds\".\"t\")",
+                sql("SELECT name FROM (SELECT 'a' name, IF(x, 1, 2) type FROM ds.t)"));
+        assertEquals("SELECT CASE WHEN x THEN 1 END AS \"year\" FROM \"ds\".\"t\"",
+                sql("SELECT CASE WHEN x THEN 1 END year FROM ds.t"));
+    }
+
+    @Test
+    void intervalDatePartsAreNotAliasesButAnAliasAfterThemIs() {
+        assertEquals("SELECT d + INTERVAL 1 DAY AS \"name\" FROM \"ds\".\"t\"", sql("SELECT d + INTERVAL 1 DAY name FROM ds.t"));
+        assertEquals("SELECT (d + INTERVAL 1 DAY) AS \"name\" FROM \"ds\".\"t\"", sql("SELECT (d + INTERVAL 1 DAY) name FROM ds.t"));
+        assertEquals("SELECT d + INTERVAL 1 DAY AS f0_ FROM \"ds\".\"t\"", sql("SELECT d + INTERVAL 1 DAY FROM ds.t"));
+        assertEquals("SELECT INTERVAL '1:2' HOUR TO MINUTE AS f0_ FROM \"ds\".\"t\"", sql("SELECT INTERVAL '1:2' HOUR TO MINUTE FROM ds.t"));
+    }
+
+    @Test
+    void offsetAsANameIsQuoted() {
+        assertEquals("SELECT 1 \"offset\"", sql("SELECT 1 offset"));
+        assertEquals("SELECT 1 AS \"offset\"", sql("SELECT 1 AS offset"));
+        assertEquals("SELECT \"offset\" + 1 AS o2 FROM \"ds\".\"t\" WHERE \"offset\" = 1 ORDER BY \"offset\"", sql("SELECT offset + 1 AS o2 FROM ds.t WHERE offset = 1 ORDER BY offset"));
+    }
+
+    @Test
+    void cteNamedOffsetIsQuoted() {
+        assertEquals("WITH \"offset\" AS (SELECT 1 AS x) SELECT x FROM \"offset\"", sql("WITH offset AS (SELECT 1 AS x) SELECT x FROM offset"));
+        assertEquals("invalidQuery", assertThrows(GcpException.class,
+                () -> sql("SELECT v FROM UNNEST([1]) v WITH OFFSET AS o")).getReason());
+    }
+
+    @Test
+    void offsetKeywordsStayKeywords() {
+        assertEquals("SELECT x, 5 \"offset\" FROM \"ds\".\"t\" ORDER BY x LIMIT 1 OFFSET 1", sql("SELECT x, 5 offset FROM ds.t ORDER BY x LIMIT 1 OFFSET 1"));
+        assertEquals("SELECT a[OFFSET(1)] AS f0_ FROM \"ds\".\"t\"", sql("SELECT a[OFFSET(1)] FROM ds.t"));
+        assertEquals("invalidQuery", assertThrows(GcpException.class,
+                () -> sql("SELECT x FROM UNNEST([1]) x WITH OFFSET")).getReason());
+    }
+
+    @Test
+    void reservedWordsAreNotRewrittenIntoAliases() {
+        assertEquals("SELECT 1 struct", sql("SELECT 1 struct"));
+        assertEquals("SELECT 1 default", sql("SELECT 1 default"));
+    }
+
+    @Test
+    void implicitAliasRewriteLeavesExpressionsAlone() {
+        assertEquals("SELECT a AS name FROM \"ds\".\"t\"", sql("SELECT a AS name FROM ds.t"));
+        assertEquals("SELECT a LIKE b AS f0_ FROM \"ds\".\"t\"", sql("SELECT a LIKE b FROM ds.t"));
+        assertEquals("SELECT SUM(x) OVER w AS f0_ FROM \"ds\".\"t\" WINDOW w AS (ORDER BY y)",
+                sql("SELECT SUM(x) OVER w FROM ds.t WINDOW w AS (ORDER BY y)"));
     }
 
     @Test

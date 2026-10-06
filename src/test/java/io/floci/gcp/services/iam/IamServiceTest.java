@@ -83,6 +83,94 @@ class IamServiceTest {
     }
 
     @Test
+    void wildcardProjectResolvesServiceAccountByEmailInOwningProject() {
+        StoredServiceAccount created = service.createServiceAccount("other-proj", "tf", "TF", "");
+        String email = "tf@other-proj.iam.gserviceaccount.com";
+
+        StoredServiceAccount sa = service.getServiceAccount("-", email);
+        assertEquals(created.getName(), sa.getName());
+        assertEquals("other-proj", sa.getProjectId());
+
+        StoredServiceAccountKey key = service.createKey("-", email);
+        assertTrue(key.getName().startsWith("projects/other-proj/serviceAccounts/" + email + "/keys/"));
+        assertEquals(key.getKeyId(), service.getKey("-", email, key.getKeyId()).getKeyId());
+        assertEquals(1, service.listKeys("-", email).size());
+        assertEquals(1, service.listKeys("other-proj", email).size());
+        service.deleteKey("-", email, key.getKeyId());
+        assertTrue(service.listKeys("other-proj", email).isEmpty());
+
+        service.updateServiceAccount("-", email, "Renamed", null);
+        assertEquals("Renamed", service.getServiceAccount("other-proj", email).getDisplayName());
+        assertEquals("projects/other-proj/serviceAccounts/" + email,
+                service.serviceAccountResource("-", email));
+
+        service.deleteServiceAccount("-", email);
+        assertTrue(service.listServiceAccounts("other-proj").isEmpty());
+    }
+
+    @Test
+    void wildcardProjectResolvesServiceAccountByUniqueId() {
+        StoredServiceAccount created = service.createServiceAccount("p2", "by-id", "ById", "");
+
+        StoredServiceAccount sa = service.getServiceAccount("-", created.getUniqueId());
+        assertEquals("by-id@p2.iam.gserviceaccount.com", sa.getEmail());
+    }
+
+    @Test
+    void everyServiceAccountAddressMapsToOnePolicyResource() {
+        StoredServiceAccount created = service.createServiceAccount("p3", "policy-sa", "Policy", "");
+        String canonical = "projects/p3/serviceAccounts/policy-sa@p3.iam.gserviceaccount.com";
+
+        assertEquals(canonical, service.serviceAccountResource("p3", "policy-sa"));
+        assertEquals(canonical, service.serviceAccountResource("p3", created.getEmail()));
+        assertEquals(canonical, service.serviceAccountResource("p3", created.getUniqueId()));
+        assertEquals(canonical, service.serviceAccountResource("-", created.getEmail()));
+        assertEquals(canonical, service.serviceAccountResource("-", created.getUniqueId()));
+    }
+
+    @Test
+    void policyStoredUnderTheAccountIdMovesToTheEmailKey() {
+        service.createServiceAccount("p5", "legacy-sa", "Legacy", "");
+        StoredPolicy legacy = service.setPolicy("projects/p5/serviceAccounts/legacy-sa", new StoredPolicy());
+
+        String canonical = service.serviceAccountResource("p5", "legacy-sa");
+
+        assertEquals("projects/p5/serviceAccounts/legacy-sa@p5.iam.gserviceaccount.com", canonical);
+        assertEquals(legacy.getEtag(), service.getPolicy(canonical).getEtag());
+        assertEquals(IamService.EMPTY_POLICY_ETAG,
+                service.getPolicy("projects/p5/serviceAccounts/legacy-sa").getEtag());
+    }
+
+    @Test
+    void allDigitAccountIdStillResolvesWhenNoUniqueIdMatches() {
+        StoredServiceAccount numeric = service.createServiceAccount("p6", "123456", "Numeric", "");
+
+        assertEquals(numeric.getEmail(), service.getServiceAccount("p6", "123456").getEmail());
+    }
+
+    @Test
+    void uniqueIdsAreTwentyOneDigitsAndDistinct() {
+        StoredServiceAccount first = service.createServiceAccount("p4", "first-sa", "First", "");
+        StoredServiceAccount second = service.createServiceAccount("p4", "second-sa", "Second", "");
+
+        assertTrue(first.getUniqueId().matches("[1-9][0-9]{20}"), first.getUniqueId());
+        assertNotEquals(first.getUniqueId(), second.getUniqueId());
+        assertEquals(second.getEmail(), service.getServiceAccount("p4", second.getUniqueId()).getEmail());
+    }
+
+    @Test
+    void wildcardProjectMissingServiceAccountIsPermissionDenied() {
+        GcpException ex = assertThrows(GcpException.class,
+                () -> service.getServiceAccount("-", "fake@example.com"));
+        assertEquals("PERMISSION_DENIED", ex.getGcpStatus());
+        assertEquals(403, ex.getHttpStatus());
+
+        GcpException keys = assertThrows(GcpException.class,
+                () -> service.listKeys("-", "missing@p1.iam.gserviceaccount.com"));
+        assertEquals("PERMISSION_DENIED", keys.getGcpStatus());
+    }
+
+    @Test
     void createKeyAndListKeys() {
         service.createServiceAccount("p1", "sa1", "SA1", "");
         StoredServiceAccountKey key = service.createKey("p1", "sa1@p1.iam.gserviceaccount.com");

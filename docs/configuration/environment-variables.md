@@ -15,6 +15,7 @@ Variable names follow the config path, uppercased with dots and dashes replaced 
 | `FLOCI_GCP_HOSTNAME` | _(none)_ | Overrides only the hostname part of `FLOCI_GCP_BASE_URL`. Set to the Compose/container service name so other containers can reach floci-gcp by DNS |
 | `FLOCI_GCP_DEFAULT_PROJECT_ID` | `floci-local` | Default GCP project ID used when no project is specified in the request |
 | `FLOCI_GCP_MAX_REQUEST_SIZE` | `512` | Maximum request body size, in **megabytes** (applies to uploads, e.g. GCS objects) |
+| `FLOCI_GCP_LOCATIONS_STRICT` | `false` | Reject location combinations that cannot exist, such as a Cloud SQL `settings.locationPreference.zone` outside the instance region. Off by default: such requests are accepted as sent |
 
 ---
 
@@ -80,7 +81,7 @@ Each service can be toggled independently. All are enabled by default.
 | `FLOCI_GCP_SERVICES_DATASTORE_ENABLED` | `true` | Datastore |
 | `FLOCI_GCP_SERVICES_SECRETMANAGER_ENABLED` | `true` | Secret Manager |
 | `FLOCI_GCP_SERVICES_IAM_ENABLED` | `true` | IAM |
-| `FLOCI_GCP_SERVICES_IAM_AUTHORIZATION_MODE` | `disabled` | IAM allow-policy evaluation mode. `disabled` preserves no-auth behavior; `enforce` applies supported bucket/object IAM checks and filters bucket `testIamPermissions` |
+| `FLOCI_GCP_SERVICES_IAM_AUTHORIZATION_MODE` | `disabled` | `enforce` evaluates stored policies for supported Resource Manager and GCS bucket/object operations. Default `disabled` keeps permissive behavior. [Coverage and limits](../services/iam.md#opt-in-enforcement) |
 | `FLOCI_GCP_SERVICES_IAM_BOOTSTRAP_ADMIN_MEMBER` | unset | Optional IAM member granted `roles/storage.admin` on each newly created bucket |
 | `FLOCI_GCP_SERVICES_IAMCREDENTIALS_ENABLED` | `true` | IAM Service Account Credentials (`generateAccessToken`) |
 | `FLOCI_GCP_SERVICES_STS_ENABLED` | `true` | Security Token Service (STS) |

@@ -98,6 +98,15 @@ class CloudFunctionsTest {
                 .forEach(functions::add);
 
         assertThat(functions).anyMatch(function -> function.getName().equals(FUNCTION_NAME));
+
+        List<Function> allLocations = new ArrayList<>();
+        client.listFunctions(ListFunctionsRequest.newBuilder()
+                        .setParent("projects/" + PROJECT_ID + "/locations/-")
+                        .build())
+                .iterateAll()
+                .forEach(allLocations::add);
+
+        assertThat(allLocations).anyMatch(function -> function.getName().equals(FUNCTION_NAME));
     }
 
     @Test

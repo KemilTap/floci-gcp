@@ -30,6 +30,8 @@ floci-gcp emulates the Cloud Run Admin API v2 control plane over REST JSON using
 | Get revision | `GET /v2/projects/{project}/locations/{location}/services/{service}/revisions/{revision}` |
 | Delete revision | `DELETE /v2/projects/{project}/locations/{location}/services/{service}/revisions/{revision}` |
 
+As on GCP, list services rejects the `-` location wildcard with `INVALID_ARGUMENT`. List revisions accepts `-` as the service (`.../services/-/revisions`) to list revisions across all services in the location.
+
 When execution is disabled, create, update, and delete return completed `google.longrunning.Operation` resources immediately. When execution is enabled, create, template-changing update, and delete return pending operations and complete or fail after runtime startup or cleanup. Operations can be read, listed, waited on, and deleted under `/v2/projects/{project}/locations/{location}/operations`.
 
 ## Behavior
@@ -217,7 +219,7 @@ With execution enabled (`FLOCI_GCP_SERVICES_CLOUDRUN_MOCK=false`, the default) f
 - Replicas are stopped with SIGTERM and killed after `FLOCI_GCP_SERVICES_CLOUDRUN_EXECUTION_CLEANUP_TIMEOUT` (kept below `FLOCI_GCP_DOCKER_API_TIMEOUT`). Deleting a pool stops all of its replicas before the delete operation completes.
 - The template must satisfy the same execution-mode constraints as services: exactly one container, GCS volumes only (no `mountOptions`), at most one container port, an image, and no env `valueSource`. Each replica gets its own snapshot of a GCS volume; writable volumes are written back to the bucket when that replica stops, so with several replicas the last one stopped wins.
 - A replica container that exits is replaced on the next update of the pool, not automatically. Replica containers are removed when the emulator shuts down.
-- At startup, floci-gcp fails worker pool operations left pending by the previous process with code 10 (`ABORTED`) and `The emulator restarted before the operation completed.`, removes worker pool containers the previous process left behind (matched by the `floci_service=cloudrun` label, a `floci_resource` under `/workerPools/`, and this emulator's `floci_emulator` and `floci_namespace` labels), and reconciles every stored pool, so with persistent storage a restored pool starts its replicas again and leaves `reconciling`. In mock mode, pools still marked reconciling are marked ready. A pending delete operation is found only when its location still has a pool or a leftover container.
+- At startup, floci-gcp fails worker pool operations left pending by the previous process with code 10 (`ABORTED`) and `The emulator restarted before the operation completed.`, removes worker pool containers the previous process left behind (matched by the `io.floci.service=cloudrun` label, an `io.floci.cloudrun.resource-name` under `/workerPools/`, and this emulator's `floci_emulator` and `floci_namespace` labels; containers from earlier versions are matched by the legacy `floci_service` and `floci_resource` labels instead), and reconciles every stored pool, so with persistent storage a restored pool starts its replicas again and leaves `reconciling`. In mock mode, pools still marked reconciling are marked ready. A pending delete operation is found only when its location still has a pool or a leftover container.
 
 Terraform and OpenTofu can manage `google_cloud_run_v2_worker_pool` with the `cloud_run_v2_custom_endpoint` shown for services; set `deletion_protection = false` so the resource can be destroyed.
 

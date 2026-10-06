@@ -15,6 +15,7 @@ import io.floci.gcp.services.operations.LongRunningOperationsService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -96,6 +97,20 @@ class CloudFunctionsServiceTest {
 
         assertEquals(1, service.listFunctions("p2", "us-central1", 10, null).getFunctionsCount());
         assertEquals(1, service.listFunctions("p1", "europe-west1", 10, null).getFunctionsCount());
+    }
+
+    @Test
+    void listFunctionsWithLocationWildcardSpansAllLocationsOfProject() {
+        service.createFunction("p1", "us-central1", "a", "{}", false);
+        service.createFunction("p1", "europe-west1", "b", "{}", false);
+        service.createFunction("p2", "us-central1", "c", "{}", false);
+
+        ListFunctionsResponse response = service.listFunctions("p1", "-", 10, null);
+
+        assertEquals(List.of(
+                        "projects/p1/locations/europe-west1/functions/b",
+                        "projects/p1/locations/us-central1/functions/a"),
+                response.getFunctionsList().stream().map(Function::getName).toList());
     }
 
     @Test

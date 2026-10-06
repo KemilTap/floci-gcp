@@ -58,6 +58,7 @@ import java.util.function.Predicate;
 public class CloudRunService {
 
     private static final Logger LOG = Logger.getLogger(CloudRunService.class);
+    private static final String WILDCARD = "-";
 
     private final StorageBackend<String, String> serviceStore;
     private final StorageBackend<String, String> revisionStore;
@@ -234,6 +235,10 @@ public class CloudRunService {
     }
 
     public ListServicesResponse listServices(String project, String location, int pageSize, String pageToken) {
+        if (WILDCARD.equals(location)) {
+            throw GcpException.invalidArgument(
+                    "Location must be a valid Google Cloud region, and cannot be the \"-\" wildcard");
+        }
         String prefix = parent(project, location) + "/services/";
         List<com.google.cloud.run.v2.Service> services = serviceStore.scan(k -> k.startsWith(prefix)).stream()
                 .map(json -> ProtoJson.merge(json, com.google.cloud.run.v2.Service.newBuilder()).build())
@@ -365,9 +370,12 @@ public class CloudRunService {
     }
 
     public ListRevisionsResponse listRevisions(String serviceName, int pageSize, String pageToken) {
-        getService(serviceName);
-        String prefix = serviceName + "/revisions/";
-        List<Revision> revisions = revisionStore.scan(k -> k.startsWith(prefix)).stream()
+        boolean allServices = WILDCARD.equals(GcpResourceNames.lastSegment(serviceName));
+        if (!allServices) {
+            getService(serviceName);
+        }
+        String prefix = allServices ? parentFromName(serviceName) + "/services/" : serviceName + "/revisions/";
+        List<Revision> revisions = revisionStore.scan(k -> k.startsWith(prefix) && k.contains("/revisions/")).stream()
                 .map(json -> ProtoJson.merge(json, Revision.newBuilder()).build())
                 .sorted(Comparator.comparing(Revision::getName))
                 .toList();

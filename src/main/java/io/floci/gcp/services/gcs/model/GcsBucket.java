@@ -1,7 +1,9 @@
 package io.floci.gcp.services.gcs.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import io.floci.gcp.core.common.ProjectNumbers;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.util.LinkedHashMap;
@@ -10,6 +12,7 @@ import java.util.Map;
 
 @RegisterForReflection
 @JsonInclude(JsonInclude.Include.NON_NULL)
+@JsonIgnoreProperties(value = "locationType", allowGetters = true)
 public class GcsBucket {
 
     private String kind = "storage#bucket";
@@ -19,6 +22,7 @@ public class GcsBucket {
     private String projectNumber;
     private String metageneration = "1";
     private String location;
+    private Map<String, Object> customPlacementConfig;
     private String storageClass;
     private String timeCreated;
     private String updated;
@@ -47,7 +51,9 @@ public class GcsBucket {
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
 
-    public String getProjectNumber() { return projectNumber; }
+    public String getProjectNumber() {
+        return projectId != null ? ProjectNumbers.of(projectId) : projectNumber;
+    }
     public void setProjectNumber(String projectNumber) { this.projectNumber = projectNumber; }
 
     public String getMetageneration() { return metageneration; }
@@ -55,6 +61,23 @@ public class GcsBucket {
 
     public String getLocation() { return location; }
     public void setLocation(String location) { this.location = location; }
+
+    public String getLocationType() {
+        return GcsLocationTypes.of(location, getDataLocations());
+    }
+
+    public Map<String, Object> getCustomPlacementConfig() { return customPlacementConfig; }
+    public void setCustomPlacementConfig(Map<String, Object> customPlacementConfig) {
+        this.customPlacementConfig = customPlacementConfig;
+    }
+
+    @JsonIgnore
+    public List<String> getDataLocations() {
+        if (customPlacementConfig == null || !(customPlacementConfig.get("dataLocations") instanceof List<?> values)) {
+            return List.of();
+        }
+        return values.stream().map(String::valueOf).toList();
+    }
 
     public String getStorageClass() { return storageClass; }
     public void setStorageClass(String storageClass) { this.storageClass = storageClass; }
@@ -68,7 +91,6 @@ public class GcsBucket {
     public String getEtag() { return etag; }
     public void setEtag(String etag) { this.etag = etag; }
 
-    @JsonIgnore
     public String getProjectId() { return projectId; }
     public void setProjectId(String projectId) { this.projectId = projectId; }
 

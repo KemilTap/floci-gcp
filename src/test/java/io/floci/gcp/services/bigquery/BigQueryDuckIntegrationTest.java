@@ -92,7 +92,8 @@ class BigQueryDuckIntegrationTest {
                 {"rows": [
                   {"json": {"id": 1, "name": "ana", "joined": "2024-01-02T03:04:05.5Z", "tags": ["a", "b"],
                             "address": {"city": "Lima"}}},
-                  {"json": {"id": 2, "name": "bo", "joined": 1704164645, "tags": [], "address": null}}
+                  {"json": {"id": 2, "name": "bo", "joined": 1704164645, "tags": [], "address": null}},
+                  {"json": {"id": 3, "name": "cyd", "joined": "2023-10-01 12:00 UTC", "tags": [], "address": null}}
                 ]}
                 """).when().post(BASE + "/datasets/shop/tables/users/insertAll")
                 .then().statusCode(200).body("insertErrors", nullValue());
@@ -152,7 +153,9 @@ class BigQueryDuckIntegrationTest {
                 .body("rows[0].f[1].v.v", equalTo(List.of("a", "b")))
                 .body("rows[0].f[2].v.f[0].v", equalTo("Lima"))
                 .body("rows[1].f[0].v", equalTo("1704164645000000"))
-                .body("rows[1].f[2].v", nullValue());
+                .body("rows[1].f[2].v", nullValue())
+                .body("rows[2].f[0].v", equalTo("1696161600000000"))
+                .body("rows[2].f[2].v", nullValue());
 
         String jobId = resp.jsonPath().getString("jobReference.jobId");
         given().when().get(BASE + "/queries/" + jobId).then().statusCode(200)
@@ -167,6 +170,67 @@ class BigQueryDuckIntegrationTest {
                 """)
                 .then().statusCode(200)
                 .body("rows[0].f[0].v", equalTo("0"));
+    }
+
+    @Test
+    @Order(5)
+    void jsonTypeReturnsBigQueryTypeNames() {
+        query("""
+                {"query": "SELECT JSON_TYPE(JSON '{\\"a\\": 1}'), JSON_TYPE(JSON '[1, 2]'), JSON_TYPE(JSON '\\"s\\"'), JSON_TYPE(JSON '20'), JSON_TYPE(JSON '-3'), JSON_TYPE(JSON '1.5'), JSON_TYPE(JSON '18446744073709551615'), JSON_TYPE(JSON 'true'), JSON_TYPE(JSON 'null'), JSON_TYPE(CAST(NULL AS JSON))", "useLegacySql": false}
+                """)
+                .then().statusCode(200)
+                .body("rows[0].f.v", equalTo(java.util.Arrays.asList("object", "array", "string", "number",
+                        "number", "number", "number", "boolean", "null", null)));
+    }
+
+    @Test
+    @Order(5)
+    void implicitAliasesThatAreDuckDbKeywordsWork() {
+        query("""
+                {"query": "SELECT sample, name FROM (SELECT 1 sample, 'ana' name) WHERE sample = 1", "useLegacySql": false}
+                """)
+                .then().statusCode(200)
+                .body("schema.fields.name", equalTo(List.of("sample", "name")))
+                .body("rows[0].f.v", equalTo(List.of("1", "ana")));
+        query("""
+                {"query": "SELECT name value, COUNT(*) year FROM shop.users GROUP BY name ORDER BY value", "useLegacySql": false}
+                """)
+                .then().statusCode(200)
+                .body("schema.fields.name", equalTo(List.of("value", "year")))
+                .body("rows[0].f.v", equalTo(List.of("ana", "1")));
+        query("""
+                {"query": "SELECT (DATE '2024-01-01' + INTERVAL 1 DAY) name, 'a' LIKE 'b'", "useLegacySql": false}
+                """)
+                .then().statusCode(200)
+                .body("schema.fields.name", equalTo(List.of("name", "f0_")));
+    }
+
+    @Test
+    @Order(5)
+    void offsetIsAnOrdinaryName() {
+        query("""
+                {"query": "SELECT 1 offset", "useLegacySql": false}
+                """)
+                .then().statusCode(200)
+                .body("schema.fields.name", equalTo(List.of("offset")))
+                .body("rows[0].f.v", equalTo(List.of("1")));
+        query("""
+                {"query": "SELECT offset + 1 o2 FROM (SELECT 1 offset) WHERE offset = 1 ORDER BY offset", "useLegacySql": false}
+                """)
+                .then().statusCode(200)
+                .body("schema.fields.name", equalTo(List.of("o2")))
+                .body("rows[0].f.v", equalTo(List.of("2")));
+        query("""
+                {"query": "SELECT x, 5 offset FROM UNNEST([1, 2, 3]) x ORDER BY x LIMIT 1 OFFSET 1", "useLegacySql": false}
+                """)
+                .then().statusCode(200)
+                .body("schema.fields.name", equalTo(List.of("x", "offset")))
+                .body("rows[0].f.v", equalTo(List.of("2", "5")));
+        query("""
+                {"query": "WITH a AS (SELECT 1 x), offset AS (SELECT x + 1 x FROM a) SELECT x FROM offset", "useLegacySql": false}
+                """)
+                .then().statusCode(200)
+                .body("rows[0].f.v", equalTo(List.of("2")));
     }
 
     @Test

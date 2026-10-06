@@ -28,6 +28,7 @@ import com.google.storage.v2.UpdateObjectRequest;
 import com.google.storage.v2.WriteObjectRequest;
 import com.google.storage.v2.WriteObjectResponse;
 import com.google.storage.v2.WriteObjectSpec;
+import io.floci.gcp.core.common.ProjectNumbers;
 import io.floci.gcp.core.storage.InMemoryStorage;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
@@ -45,6 +46,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 import java.util.zip.CRC32C;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -320,8 +322,9 @@ class GcsGrpcControllerTest {
                 .setBucket(Bucket.newBuilder().setProject("projects/test-project"))
                 .build(), created);
         assertNull(created.error);
+        String projectName = "projects/" + ProjectNumbers.of("test-project");
         assertEquals("bucket-id-bucket", created.single().getBucketId());
-        assertEquals("projects/1", created.single().getProject());
+        assertEquals(projectName, created.single().getProject());
         assertEquals("test-project", service.getBucket("bucket-id-bucket").getProjectId());
 
         RecordingObserver<Bucket> fetched = new RecordingObserver<>();
@@ -330,7 +333,7 @@ class GcsGrpcControllerTest {
                 .build(), fetched);
         assertNull(fetched.error);
         assertEquals("bucket-id-bucket", fetched.single().getBucketId());
-        assertEquals("projects/1", fetched.single().getProject());
+        assertEquals(projectName, fetched.single().getProject());
 
         RecordingObserver<ListBucketsResponse> listed = new RecordingObserver<>();
         controller.listBuckets(ListBucketsRequest.newBuilder()
@@ -339,7 +342,7 @@ class GcsGrpcControllerTest {
         assertNull(listed.error);
         assertEquals(List.of("bucket-id-bucket"),
                 listed.single().getBucketsList().stream().map(Bucket::getBucketId).toList());
-        assertEquals(List.of("projects/1"),
+        assertEquals(List.of(projectName),
                 listed.single().getBucketsList().stream().map(Bucket::getProject).toList());
 
         RecordingObserver<Bucket> updated = new RecordingObserver<>();
@@ -349,27 +352,75 @@ class GcsGrpcControllerTest {
                 .build(), updated);
         assertNull(updated.error);
         assertEquals("bucket-id-bucket", updated.single().getBucketId());
-        assertEquals("projects/1", updated.single().getProject());
+        assertEquals(projectName, updated.single().getProject());
     }
 
     @Test
-    void syntheticResponseNumbersDoNotMergeProjectIdListings() {
+    void projectNumbersAreDistinctPerProjectAndResolveListings() {
         for (String project : List.of("project-one", "project-two")) {
             RecordingObserver<Bucket> created = new RecordingObserver<>();
             controller.createBucket(CreateBucketRequest.newBuilder().setParent("projects/_")
                     .setBucketId(project + "-bucket")
                     .setBucket(Bucket.newBuilder().setProject("projects/" + project)).build(), created);
             assertNull(created.error);
-            assertEquals("projects/1", created.single().getProject());
+            assertEquals("projects/" + ProjectNumbers.of(project), created.single().getProject());
             assertEquals(project, service.getBucket(project + "-bucket").getProjectId());
         }
         for (String project : List.of("project-one", "project-two")) {
-            RecordingObserver<ListBucketsResponse> listed = new RecordingObserver<>();
-            controller.listBuckets(ListBucketsRequest.newBuilder().setParent("projects/" + project).build(), listed);
-            assertNull(listed.error);
-            assertEquals(List.of(project + "-bucket"), listed.single().getBucketsList().stream()
-                    .map(Bucket::getBucketId).toList());
+            for (String parent : List.of("projects/" + project, "projects/" + ProjectNumbers.of(project))) {
+                RecordingObserver<ListBucketsResponse> listed = new RecordingObserver<>();
+                controller.listBuckets(ListBucketsRequest.newBuilder().setParent(parent).build(), listed);
+                assertNull(listed.error);
+                assertEquals(List.of(project + "-bucket"), listed.single().getBucketsList().stream()
+                        .map(Bucket::getBucketId).toList());
+            }
         }
+    }
+
+    @Test
+    void bucketResponsesCarryLocationTypeAndCustomPlacement() {
+        Map<String, String> expected = Map.of(
+                "NAM4", "dual-region",
+                "US", "multi-region",
+                "us-central1", "region");
+        for (Map.Entry<String, String> entry : expected.entrySet()) {
+            String bucket = "loc-" + entry.getKey().toLowerCase();
+            RecordingObserver<Bucket> created = new RecordingObserver<>();
+            controller.createBucket(CreateBucketRequest.newBuilder().setParent("projects/_")
+                    .setBucketId(bucket)
+                    .setBucket(Bucket.newBuilder().setProject("projects/test-project")
+                            .setLocation(entry.getKey()))
+                    .build(), created);
+            assertNull(created.error);
+            assertEquals(entry.getValue(), created.single().getLocationType());
+        }
+
+        RecordingObserver<Bucket> custom = new RecordingObserver<>();
+        controller.createBucket(CreateBucketRequest.newBuilder().setParent("projects/_")
+                .setBucketId("loc-custom-dual")
+                .setBucket(Bucket.newBuilder().setProject("projects/test-project").setLocation("US")
+                        .setCustomPlacementConfig(Bucket.CustomPlacementConfig.newBuilder()
+                                .addDataLocations("US-EAST1").addDataLocations("US-WEST1")))
+                .build(), custom);
+        assertNull(custom.error);
+        assertEquals("dual-region", custom.single().getLocationType());
+
+        RecordingObserver<Bucket> fetched = new RecordingObserver<>();
+        controller.getBucket(GetBucketRequest.newBuilder()
+                .setName("projects/_/buckets/loc-custom-dual").build(), fetched);
+        assertNull(fetched.error);
+        assertEquals("dual-region", fetched.single().getLocationType());
+        assertEquals(List.of("US-EAST1", "US-WEST1"),
+                fetched.single().getCustomPlacementConfig().getDataLocationsList());
+
+        RecordingObserver<ListBucketsResponse> listed = new RecordingObserver<>();
+        controller.listBuckets(ListBucketsRequest.newBuilder().setParent("projects/test-project")
+                .setPrefix("loc-").build(), listed);
+        assertNull(listed.error);
+        assertEquals(Map.of("loc-custom-dual", "dual-region", "loc-nam4", "dual-region",
+                        "loc-us", "multi-region", "loc-us-central1", "region"),
+                listed.single().getBucketsList().stream().collect(Collectors.toMap(
+                        Bucket::getBucketId, Bucket::getLocationType)));
     }
 
     @Test

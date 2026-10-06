@@ -16,6 +16,8 @@ floci-gcp emulates the Cloud Functions v2 control plane over REST JSON using Goo
 | Delete function | `DELETE /v2/projects/{project}/locations/{location}/functions/{function}` |
 | Generate upload URL | `POST /v2/projects/{project}/locations/{location}/functions:generateUploadUrl` |
 
+List functions accepts `-` as the location (`projects/{project}/locations/-/functions`) to list functions across all locations.
+
 Create and delete return completed `google.longrunning.Operation` resources immediately. Operations can be read, listed, waited on, and deleted under `/v2/projects/{project}/locations/{location}/operations`.
 
 ## Behavior

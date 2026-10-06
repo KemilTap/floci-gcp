@@ -20,6 +20,8 @@ import java.util.Map;
 import java.util.UUID;
 
 import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.equalTo;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -95,6 +97,27 @@ class IamObjectAuthorizationRestIntegrationTest {
     }
 
     @Test
+    void owningProjectPolicyGrantsObjectReadThroughInheritance() {
+        String bucket = createBucket();
+        String serviceAccount = "project-object-reader@example.test";
+        String authorization = bearer(serviceAccount);
+        gcsService.putObject(bucket, "inherited.txt", "text/plain",
+                "inherited".getBytes(StandardCharsets.UTF_8),
+                GcsCustomerEncryption.none(), "http://localhost:4588");
+        StoredPolicy policy = new StoredPolicy();
+        policy.setBindings(List.of(Map.of(
+                "role", "roles/storage.objectViewer",
+                "members", List.of("serviceAccount:" + serviceAccount))));
+        iamService.setPolicy("projects/test-project", policy);
+
+        given().when().get("/storage/v1/b/{bucket}/o/inherited.txt", bucket)
+                .then().statusCode(403);
+        given().header("Authorization", authorization)
+                .when().get("/storage/v1/b/{bucket}/o/inherited.txt", bucket)
+                .then().statusCode(200);
+    }
+
+    @Test
     void objectViewerAllowsReadAndListButNotUpload() {
         String bucket = "iam-object-" + UUID.randomUUID().toString().substring(0, 8);
         given().contentType("application/json").body(Map.of("name", bucket))
@@ -133,7 +156,9 @@ class IamObjectAuthorizationRestIntegrationTest {
         given().when().delete("/storage/v1/b/{bucket}/o/{object}", bucket, "existing.txt")
                 .then().statusCode(403);
         given().when().delete("/{bucket}/{object}", bucket, "existing.txt")
-                .then().statusCode(403);
+                .then().statusCode(403)
+                .contentType(containsString("application/xml"))
+                .body("Error.Code", equalTo("AccessDenied"));
         given().contentType("text/plain").body("new")
                 .when().put("/{bucket}/{object}", bucket, "xml-upload.txt")
                 .then().statusCode(403);

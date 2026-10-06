@@ -55,12 +55,17 @@ final class GcsGrpcMapper {
                 .setProject("projects/" + stored.getProjectNumber())
                 .setMetageneration(parseLong(stored.getMetageneration()))
                 .setLocation(orEmpty(stored.getLocation()))
+                .setLocationType(stored.getLocationType())
                 .setStorageClass(orEmpty(stored.getStorageClass()))
                 .setDefaultEventBasedHold(Boolean.TRUE.equals(stored.getDefaultEventBasedHold()));
         timestamp(stored.getTimeCreated()).ifPresent(value::setCreateTime);
         timestamp(stored.getUpdated()).ifPresent(value::setUpdateTime);
         if (stored.getLabels() != null) {
             value.putAllLabels(stored.getLabels());
+        }
+        if (stored.getCustomPlacementConfig() != null) {
+            value.setCustomPlacementConfig(Bucket.CustomPlacementConfig.newBuilder()
+                    .addAllDataLocations(stored.getDataLocations()));
         }
         if (stored.getVersioning() != null) {
             value.setVersioning(Bucket.Versioning.newBuilder()
@@ -99,6 +104,10 @@ final class GcsGrpcMapper {
         }
         if (bucket.getLabelsCount() > 0) {
             body.put("labels", new LinkedHashMap<>(bucket.getLabelsMap()));
+        }
+        if (bucket.hasCustomPlacementConfig()) {
+            body.put("customPlacementConfig",
+                    Map.of("dataLocations", bucket.getCustomPlacementConfig().getDataLocationsList()));
         }
         if (bucket.hasVersioning()) {
             body.put("versioning", Map.of("enabled", bucket.getVersioning().getEnabled()));
